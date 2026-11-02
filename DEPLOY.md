@@ -49,7 +49,7 @@ Mark `DATABASE_URL` (and `ADMIN_PASSWORD` only when using environment bootstrap 
 3. If the database password is unknown, set it through the project's Database Settings page.
 4. Set the completed URI as `DATABASE_URL` in Netlify's environment settings.
 
-The transaction pooler supports serverless clients over IPv4. The `pg` driver uses parameterized queries without named prepared statements. TLS certificate verification stays enabled. If Supabase requires its project root certificate, set `DATABASE_SSL_CA` using the certificate from Supabase Database Settings. Do not disable certificate verification.
+The transaction pooler supports serverless clients over IPv4. The `pg` driver uses parameterized queries without named prepared statements. TLS certificate verification stays enabled. The app bundles the public Supabase Root 2021 CA for Supabase hosts, as documented in `certs/README.md`. `DATABASE_SSL_CA` can override it for a provider certificate rotation. Connection-string `sslmode` is removed when explicit verified TLS is configured so it cannot replace the CA settings. Do not disable certificate verification.
 
 Supabase reference: https://supabase.com/docs/guides/database/connecting-to-postgres
 

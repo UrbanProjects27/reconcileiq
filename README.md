@@ -63,7 +63,7 @@ See [DEPLOY.md](DEPLOY.md). The frontend publishes only five allowlisted files f
 
 The schema enables RLS with no browser-access policies and revokes access from anonymous/authenticated Data API roles. Only the server's database connection accesses it. Supabase anon, publishable and service-role API keys are not required by the frontend. The expected advisor notice “RLS Enabled No Policy” means browser roles are denied by design for these private tables.
 
-Use the Supabase transaction pooler for serverless connections, with a small pool and verified TLS. Set runtime secrets through Netlify's environment settings. `.netlify/`, generated output and local environment files are excluded from Git. The source repository no longer includes Render deployment configuration.
+Use the Supabase transaction pooler for serverless connections, with a small pool and verified TLS using the bundled public Supabase root certificate. Set runtime secrets through Netlify's environment settings. `.netlify/`, generated output and local environment files are excluded from Git. The source repository no longer includes Render deployment configuration.
 
 ## Verification
 

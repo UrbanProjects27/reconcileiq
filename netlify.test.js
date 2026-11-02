@@ -1,7 +1,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {createNetlifyHandler}=require('./lib/netlify-handler');
-const {openDatabase,qualifySql}=require('./lib/database');
+const {openDatabase,qualifySql,postgresConnectionOptions}=require('./lib/database');
 const {createApplication}=require('./server');
 const {createUser}=require('./lib/auth');
 const {emptyState}=require('./lib/state');
@@ -46,4 +46,17 @@ test('private-schema SQL qualifies relations while preserving columns and parame
   assert.equal(qualifySql('SELECT * FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE email=$1','reconcileiq'),'SELECT * FROM reconcileiq.app_users u JOIN reconcileiq.app_sessions s ON s.user_id=u.id WHERE email=$1');
   assert.equal(qualifySql('INSERT INTO login_attempts(key,count) VALUES($1,1) ON CONFLICT(key) DO UPDATE SET count=login_attempts.count+1','reconcileiq'),'INSERT INTO reconcileiq.login_attempts(key,count) VALUES($1,1) ON CONFLICT(key) DO UPDATE SET count=login_attempts.count+1');
   assert.throws(()=>qualifySql('SELECT * FROM app_users','bad;schema'));
+});
+
+test('Supabase TLS trusts the provider CA and keeps certificate verification enabled',()=>{
+  const {X509Certificate}=require('node:crypto');
+  const config=postgresConnectionOptions('postgres://user:test@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require',{DATABASE_SSL:'true'});
+  assert.equal(config.ssl.rejectUnauthorized,true);
+  assert.ok(!new URL(config.connectionString).searchParams.has('sslmode'));
+  const certificate=new X509Certificate(config.ssl.ca);
+  assert.match(certificate.subject,/Supabase Root 2021 CA/);
+  assert.equal(certificate.ca,true);
+  const generic=postgresConnectionOptions('postgres://user:test@db.example.com/postgres',{DATABASE_SSL:'true'});
+  assert.equal(generic.ssl.ca,undefined);
+  assert.equal(generic.ssl.rejectUnauthorized,true);
 });

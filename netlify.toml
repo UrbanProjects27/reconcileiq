@@ -8,6 +8,18 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
+  external_node_modules = ["pg", "serverless-http"]
+
+# The modern-function tracer leaves the legacy HTTP adapter's require() calls
+# external. Include only these production packages and their transitive deps.
+[functions.api]
+  included_files = [
+    "node_modules/serverless-http/**",
+    "node_modules/pg*/**",
+    "node_modules/postgres-*/**",
+    "node_modules/split2/**",
+    "node_modules/xtend/**"
+  ]
 
 [[headers]]
   for = "/*"
