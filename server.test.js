@@ -52,6 +52,25 @@ integrationTest('anonymous API access is blocked and only public assets are serv
   assert.deepEqual((await request('/health')).body,{ok:true});
 });
 
+integrationTest('spreadsheet imports require admin and preview revision, preserve history and block invalid batches',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();
+  await createUser(db,{email:'import-viewer@example.com',name:'Viewer',password,role:'viewer',mustChange:false});const viewer=await login('import-viewer@example.com');
+  const input={type:'invoices',mapping:{id:0,customer:1,date:2,amount:3},rows:[['IMPORT-1','Acme','03/11/2026',100]],dateFormat:'dmy',startRow:2};
+  assert.equal((await request('/api/import/preview','POST',input)).status,401);
+  assert.equal((await request('/api/import/preview','POST',input,viewer)).status,403);
+  assert.equal((await request('/api/import/definitions','GET',undefined,viewer)).status,403);
+  const preview=await request('/api/import/preview','POST',input,admin);assert.equal(preview.status,200);assert.equal(preview.body.canImport,true);assert.equal(preview.body.counts.added,1);
+  assert.equal((await request('/api/state','GET',undefined,admin)).body.state.invoices.length,0);
+  const saved=await request('/api/import','POST',{...input,revision:preview.body.revision},admin);assert.equal(saved.status,200);assert.equal(saved.body.revision,1);assert.equal(saved.body.state.invoices[0].id,'IMPORT-1');
+  assert.equal((await request('/api/import','POST',{...input,revision:0},admin)).status,409);
+  const duplicate=await request('/api/import/preview','POST',input,admin);assert.equal(duplicate.body.counts.skipped,1);assert.equal(duplicate.body.canImport,false);
+  const invalid={...input,rows:[['IMPORT-2','Acme','2026-11-03',100],['IMPORT-3','Acme','bad-date',100]],revision:1};
+  assert.equal((await request('/api/import','POST',invalid,admin)).status,400);
+  assert.equal((await request('/api/state','GET',undefined,admin)).body.state.invoices.length,1);
+  const audit=await db.query("SELECT action,detail FROM audit_events WHERE action=$1",['workspace.imported']);assert.equal(audit.length,1);assert.equal(JSON.parse(audit[0].detail).counts.added,1);
+  const snapshot=await db.query('SELECT data FROM workspace_snapshots WHERE revision=0');assert.equal(JSON.parse(snapshot[0].data).invoices.length,0);
+});
+
 integrationTest('sign-in uses hashed passwords, hashed sessions and HttpOnly SameSite cookies', async (t, engine)=>{
   const {db,request,login}=await fixture(t, engine);
   assert.equal((await request('/api/login','POST',{email:'admin@example.com',password:'wrong'})).status,401);

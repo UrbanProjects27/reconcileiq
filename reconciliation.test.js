@@ -43,6 +43,18 @@ test('legacy customer terms migrate once, persist, and apply to every invoice', 
   assert.equal(restored.run("customerCreditDays('Apex Distributors Pvt Ltd')"), 90);
 });
 
+test('import preview commits only on confirmation using the reviewed revision',async()=>{
+  const empty={invoices:[],returns:[],priceReturns:[],advice:[],bank:[],debitNotes:[],logs:[],customerTerms:[]};
+  const app=workspace(undefined,{user:{role:'admin',email:'admin@example.com'},revision:0,state:empty});
+  app.run(`modal=(...args)=>{window.lastImportModal=args;return {querySelector:selector=>document.getElementById(selector.slice(1))};};window.importCalls=[];
+    window.workspaceAPI=async(route,method,input)=>{window.importCalls.push({route,method,input});if(route==='/api/import/preview')return {revision:7,counts:{added:1,updated:0,skipped:0,invalid:0,blank:0},errors:[],sample:[],canImport:true};return {revision:8,state:{invoices:[{id:'IMPORTED',customer:'Acme',date:'2026-11-03',amount:100}],returns:[],priceReturns:[],advice:[],bank:[],debitNotes:[],logs:[],customerTerms:[{customer:'Acme',creditDays:45}]}};};`);
+  await app.run(`showImportPreview({type:'invoices',rows:[['IMPORTED']],mapping:{id:0},startRow:2},()=>{})`);
+  assert.equal(app.run('state.invoices.length'),0);assert.equal(app.run('window.importCalls.length'),1);
+  await app.element('confirmImport').onclick();
+  assert.equal(app.run('window.importCalls[1].route'),'/api/import');assert.equal(app.run('window.importCalls[1].input.revision'),7);
+  assert.equal(app.run('state.invoices[0].id'),'IMPORTED');assert.equal(app.run('workspaceRevision'),8);
+});
+
 test('due-date boundary uses customer terms and local calendar date', () => {
   const app = workspace();
   app.run("state.customerTerms=[{customer:'Boundary',creditDays:0}]");

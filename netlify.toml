@@ -8,7 +8,7 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-  external_node_modules = ["pg", "serverless-http", "@azure/msal-node"]
+  external_node_modules = ["pg", "serverless-http", "@azure/msal-node", "read-excel-file", "csv-parse", "yauzl"]
 
 # The modern-function tracer leaves the legacy HTTP adapter's require() calls
 # external. Include only these production packages and their transitive deps.
@@ -29,7 +29,17 @@
     "node_modules/semver/**",
     "node_modules/safe-buffer/**",
     "node_modules/buffer-equal-constant-time/**",
-    "node_modules/ecdsa-sig-formatter/**"
+    "node_modules/ecdsa-sig-formatter/**",
+    "node_modules/read-excel-file/**",
+    "node_modules/csv-parse/**",
+    "node_modules/yauzl/**",
+    "node_modules/pend/**",
+    "node_modules/fflate/**",
+    "node_modules/saxen/**",
+    "node_modules/worker-f/**",
+    "node_modules/unzipper-esm/**",
+    "node_modules/graceful-fs/**",
+    "node_modules/node-int64/**"
   ]
 
 [[headers]]

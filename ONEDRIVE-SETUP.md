@@ -1,10 +1,10 @@
 # Microsoft 365 OneDrive setup
 
 An administrator connects one Microsoft 365 account for the ReconcileIQ workspace.
-The current integration supports secure sign-in, persistent encrypted credentials,
-folder browsing, opening source files, and disconnecting. It does not yet import
-spreadsheet rows or run scheduled synchronization. Source column mappings must be
-agreed before financial records can be imported.
+The integration supports secure sign-in, persistent encrypted credentials,
+folder browsing, importing Excel/CSV records after preview, opening source files,
+and disconnecting. Synchronization runs manually when an administrator imports a
+file. No recurring schedule is enabled.
 
 ## 1. Register ReconcileIQ
 
@@ -88,6 +88,38 @@ AES-256-GCM in private database tables with RLS and no browser grants.
 **Disconnect** removes the app's stored credentials and pending authorization
 requests. To revoke Microsoft-side consent as well, have your Microsoft 365
 administrator revoke the application's grant in Enterprise applications.
+
+## 6. Import spreadsheet data
+
+1. Open **Manage connection → Browse files** and navigate to the source folder.
+2. Select **Import** beside an `.xlsx` or `.csv` file. Save legacy `.xls` files as
+   `.xlsx` first. CSV files must use UTF-8 and comma separators.
+3. Select the worksheet and data type. Import invoices before related payment
+   advice, sales returns, price returns or debit notes.
+4. Choose the header row and date format, then review the suggested column mapping.
+   Required fields have an asterisk. Keep invoice and bank reference numbers as
+   text in Excel to preserve leading zeros.
+5. Select **Preview import**. Review new records, duplicates, updates and errors.
+6. Fix any reported errors or conflicting identifiers before importing. All rows
+   are blocked while validation errors remain. Identical records are skipped.
+7. Select **Confirm import**. The records are saved to the shared database and
+   appear in the dashboard and registers. A recovery snapshot and audit event are
+   created. If another user saved after the preview, review the rebuilt preview.
+
+Supported data types: invoices, customer credit days, bank receipts, payment advice,
+sales returns, price returns and debit notes. Invoice material descriptions are
+ignored. Credit days belong to customers; use **Customer credit days** to update
+existing terms, or **Customer Summary → Manage credit days**. New customers default
+to 45 days when importing invoices.
+
+Imports add transaction records and skip identical existing ones. They do not
+replace conflicting transaction records. Customer credit-day mappings can be
+updated explicitly, with update counts shown in the preview. Unrelated workspace
+records are retained.
+
+File limits: 4 MB, 5,000 data rows plus a header per worksheet, 100 columns,
+20 worksheets and 100,000 cells across the workbook. Large archives are rejected
+before parsing. Split larger files into smaller workbooks or CSV files.
 
 ## References
 

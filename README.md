@@ -49,7 +49,7 @@ Nothing is imported automatically.
 
 Import replaces the shared financial records; it does not merge them. Users, passwords and sessions are excluded. Previous shared records are saved as a revision for recovery. Legacy invoice credit terms migrate to one mapping per customer, using the first invoice's valid terms, or 45 days when absent.
 
-Only ReconcileIQ JSON workspace backups are supported by this import. Microsoft 365 OneDrive supports administrator sign-in, encrypted token storage, folder browsing and opening source files. Follow [ONEDRIVE-SETUP.md](ONEDRIVE-SETUP.md) to configure the Entra registration and Netlify environment variables. Excel/CSV row ingestion and scheduled source refresh still require source column mappings and are not implemented.
+The backup restore imports ReconcileIQ JSON workspace backups. To import spreadsheet records, administrators can use Microsoft OneDrive → Browse files → Import on an `.xlsx` or `.csv` file. Select the worksheet, header row and data type, map columns, preview the changes, then confirm. Supported types are invoices, customer credit days, bank receipts, payment advice, sales returns, price returns and debit notes. Identical records are skipped; conflicting identifiers and invalid rows block the complete import. Existing customer credit days can be updated explicitly. Imports use revision checks, audit history and recovery snapshots. Limits: 4 MB per file, 5,000 data rows plus a header per worksheet, 100 columns, 20 worksheets and 100,000 cells per workbook. Scheduled synchronization is not enabled. See [ONEDRIVE-SETUP.md](ONEDRIVE-SETUP.md).
 
 ## Backups and recovery
 

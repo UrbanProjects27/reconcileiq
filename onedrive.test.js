@@ -23,7 +23,7 @@ async function fixture(t,engine) {
     let cache='refresh-token-sensitive';
     return {getAuthCodeUrl:async p=>'https://login.microsoftonline.com/'+tenant+'/oauth2/v2.0/authorize?'+new URLSearchParams(p),acquireTokenByCode:async p=>{observed.codes.push(p);return {account:{...account,tenantId:observed.tenant}};},getTokenCache:()=>({serialize:()=>cache,deserialize:s=>{cache=s;},getAccountByHomeId:async()=>account}),acquireTokenSilent:async()=>({accessToken:'access-token-sensitive'})};
   };
-  const {server}=await createApplication({db,skipBootstrap:true,production:false,onedrive:{env,clientFactory:factory,fetcher:async(url,options)=>{observed.graph.push({url:String(url),options});return {ok:true,json:async()=>({value:[{id:'folder-1',name:'Finance',folder:{}},{id:'file-1',name:'Invoices.xlsx',webUrl:'https://company.sharepoint.com/invoices.xlsx','@microsoft.graph.downloadUrl':'DO-NOT-EXPOSE'},{id:'file-2',name:'Unexpected',webUrl:'https://evil.example.com/'}],'@odata.nextLink':String(url)+'&$skiptoken=next-page'})};}}});
+  const {server}=await createApplication({db,skipBootstrap:true,production:false,onedrive:{env,clientFactory:factory,fetcher:async(url,options)=>{observed.graph.push({url:String(url),options});if(observed.mockFetch)return observed.mockFetch(url,options);return {ok:true,json:async()=>({value:[{id:'folder-1',name:'Finance',folder:{}},{id:'file-1',name:'Invoices.xlsx',webUrl:'https://company.sharepoint.com/invoices.xlsx','@microsoft.graph.downloadUrl':'DO-NOT-EXPOSE'},{id:'file-2',name:'Unexpected',webUrl:'https://evil.example.com/'}],'@odata.nextLink':String(url)+'&$skiptoken=next-page'})};}}});
   server.listen(0,'127.0.0.1');await once(server,'listening');const base=`http://127.0.0.1:${server.address().port}`;
   t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));await db.close();});
   const request=(route,method='GET',session,data)=>fetch(base+route,{method,redirect:'manual',headers:{Origin:base,'Content-Type':'application/json',...(session?{Cookie:session.cookie,'X-CSRF-Token':session.csrf}:{})},...(data?{body:JSON.stringify(data)}:{})});
@@ -49,6 +49,18 @@ test('Microsoft authorization failures expose only safe diagnostic identifiers',
   assert.match(authorizationFailure({code:'MODULE_NOT_FOUND'}).message,/MODULE_NOT_FOUND/);
 });
 for(const engine of ['sqlite','postgres']){
+  test(`OneDrive imports download only from Microsoft and never forward Graph credentials [${engine}]`,async t=>{
+    const f=await fixture(t,engine);const admin=await f.login();await f.callback(await f.start(admin));
+    let target='https://company.sharepoint.com/download?preauthenticated=value';let size=100;let downloads=0;
+    f.observed.mockFetch=(url,options)=>{
+      if(String(url).startsWith('https://graph.microsoft.com/'))return Response.json({file:{},name:'invoices.csv',size,'@microsoft.graph.downloadUrl':target});
+      downloads++;assert.equal(options.headers,undefined);return new Response('Invoice,Customer,Date,Amount\nINV-1,Acme,2026-11-03,100');
+    };
+    const workbook=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(workbook.status,200);const parsed=await workbook.json();assert.equal(parsed.sheets[0].rows[1][0],'INV-1');assert.ok(!JSON.stringify(parsed).includes('preauthenticated'));assert.equal(downloads,1);
+    target='https://evil.example.com/secret';assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,502);assert.equal(downloads,1);
+    target='https://company.sharepoint.com/download';size=5*1024*1024;assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,400);assert.equal(downloads,1);
+    assert.equal((await f.request('/api/onedrive/workbook?id=..%2f..','GET',admin)).status,400);
+  });
   test(`OneDrive requires admin, CSRF, one-time browser-bound state and encrypted cache [${engine}]`,async t=>{
     const f=await fixture(t,engine);const admin=await f.login(),viewer=await f.login('viewer@example.com');
     assert.equal((await f.request('/api/onedrive/status')).status,401);

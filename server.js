@@ -6,6 +6,7 @@ const { openDatabase } = require('./lib/database');
 const { emptyState, validateState } = require('./lib/state');
 const { digest, publicUser, hashPassword, verifyPassword, createUser } = require('./lib/auth');
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
+const {definitions:importDefinitions,prepareImport} = require('./lib/import');
 
 const staticFiles = new Map([
   ['/', ['index.html','text/html; charset=utf-8']],
@@ -141,23 +142,37 @@ async function createApplication(options = {}) {
         }
         if (route === '/api/onedrive/disconnect' && method === 'POST') { await onedrive.disconnect(session); return json(response,200,{ok:true}); }
         if (route === '/api/onedrive/files' && method === 'GET') return json(response,200,await onedrive.files(url.searchParams.get('folder') || 'root',url.searchParams.get('page') || ''));
+        if (route === '/api/onedrive/workbook' && method === 'GET') return json(response,200,await onedrive.workbook(url.searchParams.get('id') || ''));
         fail(404,'Not found.');
       }
       if (route === '/api/state' && method === 'GET') return json(response,200,await readWorkspace(db));
-      if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST')) {
+      if (route === '/api/import/definitions' && method === 'GET') {admin();return json(response,200,{definitions:importDefinitions});}
+      if (route === '/api/import/preview' && method === 'POST') {
+        admin();const input=await body(request);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
+        return json(response,200,{...preview,revision:current.revision});
+      }
+      if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST') || (route === '/api/import' && method === 'POST')) {
         if (session.role === 'viewer') fail(403,'Viewers cannot change workspace data.');
         if (route === '/api/restore') admin();
+        if (route === '/api/import') admin();
         const input = await body(request);
         if (!Number.isInteger(input.revision) || input.revision < 0) fail(400,'A workspace revision is required.');
-        const next = validateState(input.state); const serialized = JSON.stringify(next);
+        let next = route === '/api/import' ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
           const [previous] = await query('SELECT revision,data FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
-          const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[serialized,input.revision]);
+          let imported;
+          if(route === '/api/import'){
+            if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
+            imported=prepareImport(input,JSON.parse(previous.data));
+            if(!imported.canImport)fail(400,imported.errors[0]?.message || 'There are no new or changed records to import.');
+            next=imported.state;
+          }
+          const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[JSON.stringify(next),input.revision]);
           if (!updated.length) fail(409,'Another user saved changes. Your input is still open; review the latest data and save again.');
           const revision = updated[0].revision;
           await query('INSERT INTO workspace_snapshots(revision,data,created_at) VALUES($1,$2,$3) ON CONFLICT(revision) DO NOTHING',[previous.revision,previous.data,new Date().toISOString()]);
           await query('DELETE FROM workspace_snapshots WHERE revision < $1',[revision-100]);
-          await audit(query,session,route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(JSON.parse(previous.data),next)});
+          await audit(query,session,route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(JSON.parse(previous.data),next),...(imported?{type:input.type,counts:imported.counts}:{})});
           return {revision,state:next};
         });
         return json(response,200,result);
