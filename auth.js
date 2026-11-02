@@ -28,7 +28,7 @@
       <form id="loginForm" class="account-form"><label>Email<input id="loginEmail" type="email" autocomplete="username" required /></label>
       <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required maxlength="128" /></label>
       <p id="loginError" class="form-error" role="alert">${escape(message)}</p><button class="btn primary" type="submit">Sign in</button></form>
-      <p class="auth-help">Ask your administrator for an account. First-time setup: follow the deployment guide or run <code>npm run setup</code> on your local server.</p>`);
+      <p class="auth-help">Contact your finance administrator for an account or password reset.</p>`);
     document.getElementById('loginForm').onsubmit = async event => {
       event.preventDefault(); const button = event.submitter; button.disabled = true;
       try {
@@ -119,7 +119,7 @@
     document.getElementById('backupFile').onchange=async event=>{
       try{
         const file=event.target.files[0];if(!file)return;
-        if(file.size>8*1024*1024)throw new Error('Backup must be smaller than 8 MB.');
+        if(file.size>4*1024*1024)throw new Error('Backup must be smaller than 4 MB.');
         previewRestore(JSON.parse(await file.text()),file.name);
       }catch(error){errorText('fileError',error);}
     };

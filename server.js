@@ -20,7 +20,7 @@ async function body(request) {
   let size = 0; const chunks = [];
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 8 * 1024 * 1024) fail(413, 'Request exceeds 8 MB.');
+    if (size > 4 * 1024 * 1024) fail(413, 'Request exceeds 4 MB.');
     chunks.push(chunk);
   }
   try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400,'JSON object required.'); return value; }
@@ -43,7 +43,7 @@ function changeSummary(before, after) {
 async function createApplication(options = {}) {
   const db = options.db || await openDatabase();
   const production = options.production === undefined ? process.env.NODE_ENV === 'production' : options.production;
-  const configuredOrigin = options.origin || process.env.APP_ORIGIN || process.env.RENDER_EXTERNAL_URL;
+  const configuredOrigin = options.origin || process.env.APP_ORIGIN || process.env.URL;
   if (production && !configuredOrigin) throw new Error('APP_ORIGIN is required for production.');
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {

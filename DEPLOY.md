@@ -1,68 +1,93 @@
-# First deployment: GitHub + Render
+# Deploy ReconcileIQ on Netlify + Supabase
 
-The application is prepared locally. The repository and Render connection are configured for a free trial. The web service and database can also be provisioned directly through the connected Render integration; render.yaml describes the matching configuration for future Blueprint deployments.
+The source is in https://github.com/UrbanProjects27/reconcileiq. Netlify hosts the frontend and API; Supabase PostgreSQL stores financial records, accounts, sessions and audit history. The app retains its existing email/password authentication and role controls. It does not use Supabase Auth or expose Supabase database API keys to browsers.
 
-## 1. Create your accounts
+## Current resources
 
-1. Create or sign in to your [GitHub account](https://github.com/signup).
-2. Create or sign in to your [Render account](https://dashboard.render.com/register). Using GitHub sign-in makes connecting the repository straightforward.
+- Netlify site: https://reconcileiq-urbanretail.netlify.app
+- Netlify project: https://app.netlify.com/projects/reconcileiq-urbanretail
+- Supabase project: https://supabase.com/dashboard/project/rbilbxgdmafejstuzbzo
+- Supabase organization: Urban Retail Projects
+- Database schema: `reconcileiq`
 
-Keep passwords, verification codes and hosting secrets in the provider's own forms. Do not add them to repository files or chat.
+Render is not part of this deployment. Its previous resources are not used by the application.
 
-## 2. Put the source in a private GitHub repository
+## Database setup
 
-Create a private repository named `reconcileiq`. Upload the contents of the source package, retaining the `lib` and `scripts` folders. `render.yaml`, `package.json` and `package-lock.json` must be in the repository root.
+The schema is defined in `supabase/schema.sql`. It has been applied to the ReconcileIQ project. All six tables have RLS enabled. Anonymous and authenticated Data API roles cannot access this private schema. No permissive browser policies are needed because only the server's database connection reads and writes it.
 
-Include:
+For another Supabase project, review existing tables before applying that SQL through the SQL editor or your migration tooling. Use a new, dedicated project when possible.
 
-- `index.html`, `app.js`, `auth.js`, `styles.css`, `overrides.css`, `server.js`
-- `lib/`, `scripts/`
-- `package.json`, `package-lock.json`, `render.yaml`, `.gitignore`, `.env.example`
-- `README.md`, `DEPLOY.md`, `reconciliation.test.js`, `server.test.js`
+## Netlify configuration
 
-Do not upload `data/`, `.env`, `node_modules/`, local backups or test output. The release ZIP contains source files only; extract it before uploading the folder contents to GitHub.
+`netlify.toml` publishes `dist/` and bundles `netlify/functions/api.mjs`. `npm run build` copies only `index.html`, `app.js`, `auth.js`, `styles.css` and `overrides.css` into the published directory. The backend source, SQL, credentials, database files and project tools remain outside it.
 
-## 3. Create the Render Blueprint
+The modern Fetch function adapts the existing HTTP API at `/api/*` and `/health`. It caches application initialization per warm instance, keeps the PostgreSQL connection pool small and checks the canonical app origin on writes. No long-running Node process or public backend port is required.
 
-1. In Render choose **New → Blueprint**, connect GitHub and select the private `reconcileiq` repository. Grant repository access only as needed.
-2. Render reads `render.yaml` and shows the web service and database it will create. Review the resource names and region; both resources should use the Free plan. Change names if they conflict with existing resources.
-3. Enter the prompted values:
-   - `ADMIN_EMAIL`: your administrator email.
-   - `ADMIN_NAME`: your display name.
-   - `ADMIN_PASSWORD`: a unique 12–128 character password.
-4. Create the Blueprint after confirming both resources are Free and wait for the web service health check to pass.
+Set these environment variables in Netlify through its UI, CLI or API. Runtime variables cannot be supplied by `netlify.toml`.
 
-The Blueprint connects `DATABASE_URL` using the database's internal connection string. Database public access is disabled. The server uses Render's public URL (`RENDER_EXTERNAL_URL`) to verify request origins and listens on Render's supplied port.
+| Variable | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `AWS_LAMBDA_JS_RUNTIME` | `nodejs24.x` |
+| `APP_ORIGIN` | `https://reconcileiq-urbanretail.netlify.app` |
+| `DATABASE_URL` | Supabase transaction pooler URI, with the real database password |
+| `DATABASE_SCHEMA` | `reconcileiq` |
+| `DATABASE_SCHEMA_READY` | `true` |
+| `DATABASE_POOL_MAX` | `2` |
+| `DATABASE_SSL` | `true` |
+| `ADMIN_EMAIL` | Initial administrator's email |
+| `ADMIN_NAME` | Initial administrator's name |
+| `ADMIN_PASSWORD` | Initial temporary password; remove after bootstrap and redeploy |
 
-If setting up the service manually instead: choose Node, build with `npm ci --omit=dev`, start with `npm start`, set Node 24.14.0, `NODE_ENV=production`, `DATABASE_URL`, and `APP_ORIGIN` to the exact HTTPS site origin. Create the first admin using the three `ADMIN_*` variables above. The web service and database should be in the same region.
+Mark `DATABASE_URL` and `ADMIN_PASSWORD` as secrets in the Production context, with Functions scope. Use other scopes only if needed for provider/tooling limitations. Keep all secret values out of Git and chat.
 
-Render references: [Blueprint fields](https://render.com/docs/blueprint-spec) and [Node deployment](https://render.com/docs/deploy-node-express-app).
+### Obtain the database connection URI
 
-## 4. Verify the live deployment
+1. Open the Supabase project and choose **Connect → Transaction pooler**.
+2. Copy the URI (port `6543`) and replace the password placeholder with the database password. URL-encode password punctuation where required.
+3. If the database password is unknown, set it through the project's Database Settings page.
+4. Set the completed URI as `DATABASE_URL` in Netlify's environment settings.
 
-1. Open the site's `/health` address: it should return `{"ok":true}`.
-2. Sign in using the administrator email and password. A new workspace should be empty. The administrator password supplied by environment bootstrap must be changed on first sign-in.
-3. Remove `ADMIN_PASSWORD` from the web service environment after the first successful setup. It is only used if no user exists. Removing it does not remove your account.
-4. Add a test invoice and adjust the customer's credit days. Confirm Due and Overdue amounts change as expected.
-5. Create an Editor and a Viewer under Settings. Use separate browser sessions to confirm both see shared records, and the Viewer cannot save changes.
-6. Open the same revision in two sessions. Save from one, then the other. The second save must request a review/retry instead of discarding the first user's changes.
-7. Download a JSON backup and test Previous revisions with a disposable test record.
-8. Restart/redeploy the service and verify records remain present.
-9. Check the database's backup policy in Render and arrange independent backups before relying on the app for daily operations.
+The transaction pooler supports serverless clients over IPv4. The `pg` driver uses parameterized queries without named prepared statements. TLS certificate verification stays enabled. If Supabase requires its project root certificate, set `DATABASE_SSL_CA` using the certificate from Supabase Database Settings. Do not disable certificate verification.
 
-The free database expires 30 days after creation and has no managed backups. Free web services sleep after idle periods. Export workspace backups regularly and upgrade or migrate before the database expires.
+Supabase reference: https://supabase.com/docs/guides/database/connecting-to-postgres
 
-After this, import your existing browser data using the README workflow and share the site's HTTPS link with your team. Creating accounts does not send invitation emails; provide each user their sign-in details privately.
+## Build and deploy
 
-## Custom domain
+```powershell
+npm ci
+npm test
+npm run build
+npx netlify build --offline
+npx netlify deploy --prod --build
+```
 
-Add the domain in Render and configure its DNS using Render's instructions. Set `APP_ORIGIN` to the exact final HTTPS origin (for example `https://reconcile.example.com`) and redeploy. Use that address consistently; other origins will be rejected for writes.
+The local `.netlify/state.json` links this directory to its site and is ignored by Git. This site was created for CLI deployment; it is not automatically linked to Git continuous deployment. Pushes update GitHub source but do not publish the app until Git continuous deployment is connected in Netlify or another CLI deploy runs.
+
+Netlify references:
+- https://docs.netlify.com/build/functions/configuration/
+- https://docs.netlify.com/build/environment-variables/overview/
+
+## First sign-in and verification
+
+1. `/health` should return `{"ok":true}` and an anonymous `/api/session` request should return `401`.
+2. Sign in with the initial administrator email and temporary password. You must choose a new password before opening financial records.
+3. A new workspace starts empty. No browser data or sample invoices are imported automatically.
+4. Create team accounts under Settings. New team members must also change their temporary passwords.
+5. Test an Editor and a Viewer in separate browser sessions. Both should see the same data; the Viewer cannot save.
+6. Confirm simultaneous edits reject a stale save while preserving form input for review and retry.
+7. Download a JSON backup and test recovery through Previous revisions with a disposable record.
+8. Import your existing browser data using the workflow in README.md.
+
+JSON imports are limited to 4 MB for compatibility with serverless payload limits. The app retains 100 previous revisions in Supabase; these are not independent disaster-recovery backups. Keep regular JSON downloads and review Supabase's backup settings for the project's plan.
 
 ## Troubleshooting
 
-- **Startup says DATABASE_URL is required:** connect the PostgreSQL database and check the environment variable.
-- **Origin is not allowed:** ensure `APP_ORIGIN` matches the address in the browser, including HTTPS and any custom hostname. If not explicitly set, Render's default public URL is used.
-- **Please sign in / temporary password:** sign in, or complete the required password change. Ask another admin to reset a forgotten password.
-- **Another user saved changes:** the latest shared data has been loaded while keeping form inputs open. Review them and save again.
-- **Import rejected:** review the reported field. JSON imports require valid dates, positive amounts, known invoice references and matching customer names. They reject duplicate invoice numbers and markup in text.
-- **No data from the previous local version:** browser storage is specific to the original site address. Export from that address and import the JSON on the new live site.
+- **Database not configured / 503:** check `DATABASE_URL` in the Production context and redeploy after saving it. Also confirm the Supabase project is active.
+- **Password authentication failed:** verify the database password in the URI and its URL encoding. This is separate from an app user's password.
+- **Certificate error:** obtain the project's CA certificate and configure `DATABASE_SSL_CA`; keep TLS verification enabled.
+- **Origin is not allowed:** `APP_ORIGIN` must exactly match the HTTPS hostname used by the browser. If adding a custom domain, update that variable and redeploy.
+- **No workspace tables:** apply `supabase/schema.sql` and verify the private schema before setting `DATABASE_SCHEMA_READY=true`.
+- **RLS Enabled No Policy advisor notices:** expected for private, server-only tables. Do not add broad public policies to silence these informational notices.
+- **Netlify connector needs reauthentication:** the CLI can use `netlify login --request` followed by the user-authorized `--check` flow.

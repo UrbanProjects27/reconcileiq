@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { once } = require('node:events');
-const { openDatabase, schema, initialize } = require('./lib/database');
+const { openDatabase, postgresSchema, qualifySql, initialize } = require('./lib/database');
 const { createUser, digest } = require('./lib/auth');
 const { emptyState, validateState } = require('./lib/state');
 const { createApplication } = require('./server');
@@ -15,9 +15,9 @@ async function fixture(t, engine) {
   if(engine === 'postgres') {
     const {PGlite} = require('@electric-sql/pglite');
     const pg = await PGlite.create();
-    await pg.exec(schema);
-    db = {kind:'postgres', query:async(sql,params=[]) => (await pg.query(sql,params)).rows,
-      transaction:fn=>pg.transaction(tx=>fn(async(sql,params=[]) => (await tx.query(sql,params)).rows)), close:()=>pg.close()};
+    await pg.exec(postgresSchema('reconcileiq'));
+    db = {kind:'postgres', query:async(sql,params=[]) => (await pg.query(qualifySql(sql,'reconcileiq'),params)).rows,
+      transaction:fn=>pg.transaction(tx=>fn(async(sql,params=[]) => (await tx.query(qualifySql(sql,'reconcileiq'),params)).rows)), close:()=>pg.close()};
     await initialize(db);
   } else db = await openDatabase({url:'',filename:':memory:'});
   const admin = await createUser(db,{email:'admin@example.com',name:'Admin',password,role:'admin',mustChange:false});

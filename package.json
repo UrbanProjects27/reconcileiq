@@ -6,15 +6,18 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "setup": "node --env-file-if-exists=.env scripts/setup.js",
-    "test": "node --test reconciliation.test.js server.test.js"
+    "build": "node scripts/build.js",
+    "test": "node --test reconciliation.test.js server.test.js netlify.test.js"
   },
   "engines": {
     "node": ">=24.14.0 <25"
   },
   "dependencies": {
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "serverless-http": "4.0.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.14"
+    "@electric-sql/pglite": "^0.5.14",
+    "netlify-cli": "27.16.2"
   }
 }

@@ -57,9 +57,13 @@ Admins can download a JSON workspace backup and review the latest 200 server-rec
 
 The server transactionally retains the previous 100 workspace revisions. **Settings → Previous revisions → Review restore** restores an earlier state as a new revision. These snapshots are in the same database and are not a substitute for independent database backups. Keep periodic JSON downloads off the hosting service and verify your provider's database backup/recovery settings. Database-level backups are needed to recover user accounts and the full audit history as well.
 
-## Deploy on Render
+## Deploy on Netlify with Supabase
 
-See [DEPLOY.md](DEPLOY.md) for account setup, repository upload and the deployment checklist. `render.yaml` defines a Node web service and private PostgreSQL database in Singapore. The current configuration uses free trial plans. The free database expires after 30 days and has no managed backups; the free web service sleeps when idle. Upgrade before ongoing business use.
+See [DEPLOY.md](DEPLOY.md). The frontend publishes only five allowlisted files from `dist/`. A Netlify Function adapts the existing Node API at `/api/*` and `/health`; Supabase PostgreSQL stores all shared records and accounts in the private `reconcileiq` schema. Password-based login remains the app's own server-side authentication system.
+
+The schema enables RLS with no browser-access policies and revokes access from anonymous/authenticated Data API roles. Only the server's database connection accesses it. Supabase anon, publishable and service-role API keys are not required by the frontend. The expected advisor notice “RLS Enabled No Policy” means browser roles are denied by design for these private tables.
+
+Use the Supabase transaction pooler for serverless connections, with a small pool and verified TLS. Set runtime secrets through Netlify's environment settings. `.netlify/`, generated output and local environment files are excluded from Git. The source repository no longer includes Render deployment configuration.
 
 ## Verification
 
@@ -67,6 +71,6 @@ See [DEPLOY.md](DEPLOY.md) for account setup, repository upload and the deployme
 npm test
 ```
 
-The suite checks calculations and failed-save retries plus HTTP integration tests on SQLite and an embedded PostgreSQL engine (PGlite). It verifies authentication, roles, CSRF/origin checks, validation, simultaneous saves, audit events, snapshots, password/session revocation and persistence. The PostgreSQL engine tests exercise PostgreSQL SQL semantics; hosted database connectivity, TLS and Render networking still need a post-deployment smoke test.
+The suite checks calculations and failed-save retries plus HTTP integration tests on SQLite and an embedded PostgreSQL engine (PGlite). It verifies authentication, roles, CSRF/origin checks, validation, simultaneous saves, audit events, snapshots, password/session revocation and persistence. The PostgreSQL engine tests exercise PostgreSQL SQL semantics; hosted database connectivity, TLS and Netlify routing still need a post-deployment smoke test.
 
 The public server serves only an explicit list of frontend files. Passwords use salted scrypt hashes, session tokens are hashed in storage, production cookies are Secure/HttpOnly/SameSite=Strict, and state changes require an authenticated role, CSRF token and allowed origin.
