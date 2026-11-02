@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS reconcileiq.audit_events (
 );
 CREATE TABLE IF NOT EXISTS reconcileiq.workspace_snapshots (revision INTEGER PRIMARY KEY, data TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_connections (id INTEGER PRIMARY KEY, generation TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_oauth (state_hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON reconcileiq.app_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS audit_created ON reconcileiq.audit_events(created_at);
 
@@ -25,6 +27,8 @@ ALTER TABLE reconcileiq.workspace ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.workspace_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.login_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.onedrive_connections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.onedrive_oauth ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA reconcileiq FROM PUBLIC;
 
 REVOKE ALL ON SCHEMA reconcileiq FROM anon, authenticated;

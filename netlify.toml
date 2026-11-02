@@ -8,7 +8,7 @@
 [functions]
   directory = "netlify/functions"
   node_bundler = "esbuild"
-  external_node_modules = ["pg", "serverless-http"]
+  external_node_modules = ["pg", "serverless-http", "@azure/msal-node"]
 
 # The modern-function tracer leaves the legacy HTTP adapter's require() calls
 # external. Include only these production packages and their transitive deps.
@@ -18,7 +18,18 @@
     "node_modules/pg*/**",
     "node_modules/postgres-*/**",
     "node_modules/split2/**",
-    "node_modules/xtend/**"
+    "node_modules/xtend/**",
+    "node_modules/@azure/msal-node/**",
+    "node_modules/@azure/msal-common/**",
+    "node_modules/jsonwebtoken/**",
+    "node_modules/jws/**",
+    "node_modules/jwa/**",
+    "node_modules/lodash.*/**",
+    "node_modules/ms/**",
+    "node_modules/semver/**",
+    "node_modules/safe-buffer/**",
+    "node_modules/buffer-equal-constant-time/**",
+    "node_modules/ecdsa-sig-formatter/**"
   ]
 
 [[headers]]

@@ -5,6 +5,7 @@ const { randomBytes, randomUUID } = require('node:crypto');
 const { openDatabase } = require('./lib/database');
 const { emptyState, validateState } = require('./lib/state');
 const { digest, publicUser, hashPassword, verifyPassword, createUser } = require('./lib/auth');
+const { createOneDrive, callbackPath } = require('./lib/onedrive');
 
 const staticFiles = new Map([
   ['/', ['index.html','text/html; charset=utf-8']],
@@ -46,6 +47,7 @@ async function createApplication(options = {}) {
   const configuredOrigin = options.origin || process.env.APP_ORIGIN || process.env.URL;
   if (production && !configuredOrigin) throw new Error('APP_ORIGIN is required for production.');
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
+  const onedrive = createOneDrive({db,audit,...options.onedrive});
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {
     const [count] = await db.query('SELECT COUNT(*) AS count FROM app_users');
     if (Number(count.count) === 0) await createUser(db, {email:process.env.ADMIN_EMAIL,name:process.env.ADMIN_NAME || 'Workspace Admin',password:process.env.ADMIN_PASSWORD,role:'admin',mustChange:true});
@@ -72,6 +74,17 @@ async function createApplication(options = {}) {
         const origin = configuredOrigin || `http://${request.headers.host}`;
         if (request.headers.origin !== new URL(origin).origin) fail(403,'Request origin is not allowed.');
         if (!String(request.headers['content-type'] || '').startsWith('application/json')) fail(415,'Use application/json.');
+      }
+      if (route === callbackPath && method === 'GET') {
+        const binding = String(request.headers.cookie || '').split(';').map(v=>v.trim()).find(v=>v.startsWith('riq_onedrive='))?.slice('riq_onedrive='.length) || '';
+        response.setHeader('Set-Cookie',`riq_onedrive=; HttpOnly; SameSite=Lax; Path=${callbackPath}; Max-Age=0${production?'; Secure':''}`);
+        try {
+          await onedrive.callback(url.searchParams,binding);
+          response.writeHead(303,{Location:'/?onedrive=connected'}); return response.end();
+        } catch (error) {
+          const message = error.status ? error.message : 'OneDrive connection failed. Start again from Settings.';
+          response.writeHead(303,{Location:'/?onedrive=error&message='+encodeURIComponent(message)}); return response.end();
+        }
       }
       if (route === '/api/login' && method === 'POST') {
         const input = await body(request);
@@ -117,6 +130,19 @@ async function createApplication(options = {}) {
       }
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
+      if (route.startsWith('/api/onedrive/')) {
+        admin();
+        if (route === '/api/onedrive/status' && method === 'GET') return json(response,200,await onedrive.status());
+        if (route === '/api/onedrive/connect' && method === 'POST') {
+          const origin = new URL(configuredOrigin || `http://${request.headers.host}`).origin;
+          const {url:authorizeUrl,binding} = await onedrive.start(session,origin);
+          response.setHeader('Set-Cookie',`riq_onedrive=${binding}; HttpOnly; SameSite=Lax; Path=${callbackPath}; Max-Age=600${production?'; Secure':''}`);
+          return json(response,200,{url:authorizeUrl});
+        }
+        if (route === '/api/onedrive/disconnect' && method === 'POST') { await onedrive.disconnect(session); return json(response,200,{ok:true}); }
+        if (route === '/api/onedrive/files' && method === 'GET') return json(response,200,await onedrive.files(url.searchParams.get('folder') || 'root',url.searchParams.get('page') || ''));
+        fail(404,'Not found.');
+      }
       if (route === '/api/state' && method === 'GET') return json(response,200,await readWorkspace(db));
       if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST')) {
         if (session.role === 'viewer') fail(403,'Viewers cannot change workspace data.');

@@ -7,12 +7,13 @@
     "start": "node --env-file-if-exists=.env server.js",
     "setup": "node --env-file-if-exists=.env scripts/setup.js",
     "build": "node scripts/build.js",
-    "test": "node --test reconciliation.test.js server.test.js netlify.test.js"
+    "test": "node --test reconciliation.test.js server.test.js netlify.test.js onedrive.test.js"
   },
   "engines": {
     "node": ">=24.14.0 <25"
   },
   "dependencies": {
+    "@azure/msal-node": "7.1.2",
     "pg": "^8.23.1",
     "serverless-http": "4.0.0"
   },
