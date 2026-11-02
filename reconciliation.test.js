@@ -54,6 +54,13 @@ test('import preview commits only on confirmation using the reviewed revision',a
   assert.equal(app.run('window.importCalls[1].route'),'/api/import');assert.equal(app.run('window.importCalls[1].input.revision'),7);
   assert.equal(app.run('state.invoices[0].id'),'IMPORTED');assert.equal(app.run('workspaceRevision'),8);
 });
+test('large invoice calculations stay accurate while register HTML is paginated',()=>{
+  const empty={invoices:[],returns:[],priceReturns:[],advice:[],bank:[],debitNotes:[],logs:[],customerTerms:[{customer:'Bulk',creditDays:45}]};
+  empty.invoices=Array.from({length:25001},(_,i)=>({id:`BULK-${i}`,customer:'Bulk',date:'2026-11-03',amount:100}));empty.advice.push({id:'A-1',invoice:'BULK-0',customer:'Bulk',date:'2026-11-03',amount:20,type:'Payment',utr:'U-1'});
+  const app=workspace(undefined,{user:{role:'admin'},revision:0,state:empty});assert.equal(app.run('totals().pending'),2500080);
+  const html=app.run('renderInvoices()');assert.equal((html.match(/<tr class="clickable"/g)||[]).length,100);assert.equal(app.run('pageCounts.invoices.total'),25001);
+  app.run("pagePositions.invoices=1");assert.ok(app.run('renderInvoices()').includes('BULK-100'));assert.equal(app.run("invoiceData(state.invoices[0]).Payment"),20);
+});
 
 test('due-date boundary uses customer terms and local calendar date', () => {
   const app = workspace();

@@ -38,7 +38,7 @@ async function fixture(t, engine) {
     assert.equal(result.status,200,JSON.stringify(result.body));
     return {...result.body,cookie:result.headers.get('set-cookie').split(';')[0]};
   }
-  return {db,admin,request,login};
+  return {db,admin,request,login,base};
 }
 
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
@@ -69,6 +69,20 @@ integrationTest('spreadsheet imports require admin and preview revision, preserv
   assert.equal((await request('/api/state','GET',undefined,admin)).body.state.invoices.length,1);
   const audit=await db.query("SELECT action,detail FROM audit_events WHERE action=$1",['workspace.imported']);assert.equal(audit.length,1);assert.equal(JSON.parse(audit[0].detail).counts.added,1);
   const snapshot=await db.query('SELECT data FROM workspace_snapshots WHERE revision=0');assert.equal(JSON.parse(snapshot[0].data).invoices.length,0);
+});
+
+integrationTest('large workspaces use compressed requests, storage and responses without losing snapshots',async(t,engine)=>{
+  const {gzipSync}=require('node:zlib');const {decodeState}=require('./lib/state-codec');const {base,db,login,request}=await fixture(t,engine);const session=await login();
+  const state=emptyState();state.invoices=Array.from({length:25001},(_,i)=>({id:`LARGE-${i}`,customer:'Large customer with a long display name for compression verification',date:'2026-11-03',amount:100,code:'LARGE-CUSTOMER'.repeat(5)}));
+  const text=JSON.stringify({revision:0,state});assert.ok(Buffer.byteLength(text)>4*1024*1024);
+  const put=await fetch(base+'/api/state',{method:'PUT',headers:{Origin:base,'Content-Type':'application/json','Content-Encoding':'gzip',Cookie:session.cookie,'X-CSRF-Token':session.csrf},body:gzipSync(text)});
+  assert.equal(put.status,200);assert.equal(put.headers.get('content-encoding'),'gzip');assert.equal((await put.json()).state.invoices.length,25001);
+  const [stored]=await db.query('SELECT data FROM workspace WHERE id=1');assert.ok(stored.data.startsWith('gzip:'));assert.equal(decodeState(stored.data).invoices.length,25001);
+  const shared=await request('/api/state','GET',undefined,session);assert.equal(shared.body.state.invoices.length,25001);
+  const backup=await request('/api/backup','GET',undefined,session);assert.equal(backup.body.state.invoices[25000].id,'LARGE-25000');
+  const portable=await fetch(base+'/api/state',{method:'PUT',headers:{Origin:base,'Content-Type':'application/json',Cookie:session.cookie,'X-CSRF-Token':session.csrf},body:JSON.stringify({__reconcileiqGzip:gzipSync(JSON.stringify({revision:1,state})).toString('base64')})});
+  assert.equal(portable.status,200);assert.equal((await portable.json()).revision,2);
+  const snapshot=await request('/api/snapshots/1','GET',undefined,session);assert.equal(snapshot.status,200);assert.equal(snapshot.body.state.invoices.length,25001);
 });
 
 integrationTest('sign-in uses hashed passwords, hashed sessions and HttpOnly SameSite cookies', async (t, engine)=>{

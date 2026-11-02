@@ -58,7 +58,8 @@ for(const engine of ['sqlite','postgres']){
     };
     const workbook=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(workbook.status,200);const parsed=await workbook.json();assert.equal(parsed.sheets[0].rows[1][0],'INV-1');assert.ok(!JSON.stringify(parsed).includes('preauthenticated'));assert.equal(downloads,1);
     target='https://evil.example.com/secret';assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,502);assert.equal(downloads,1);
-    target='https://company.sharepoint.com/download';size=5*1024*1024;assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,400);assert.equal(downloads,1);
+    target='https://company.sharepoint.com/download';size=70*1024*1024;const large=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(large.status,200);assert.equal((await large.json()).large,true);assert.equal(downloads,1);
+    size=101*1024*1024;assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,400);assert.equal(downloads,1);
     assert.equal((await f.request('/api/onedrive/workbook?id=..%2f..','GET',admin)).status,400);
   });
   test(`OneDrive requires admin, CSRF, one-time browser-bound state and encrypted cache [${engine}]`,async t=>{

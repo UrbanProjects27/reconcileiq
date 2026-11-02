@@ -6,10 +6,18 @@
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const errorText = (id, error) => { document.getElementById(id).textContent = error.message; };
   async function api(route, method = 'GET', data) {
+    let payload=data===undefined?undefined:JSON.stringify(data);
+    if(payload && new Blob([payload]).size>256*1024 && typeof CompressionStream!=='undefined'){
+      const bytes=new Uint8Array(await new Response(new Blob([payload]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());let binary='';
+      for(let offset=0;offset<bytes.length;offset+=16384)binary+=String.fromCharCode(...bytes.subarray(offset,offset+16384));
+      // Keep transport ASCII JSON: some hosting gateways transform binary
+      // Content-Encoding bodies before handing them to a native function.
+      payload=JSON.stringify({__reconcileiqGzip:btoa(binary)});
+    }
     const response = await fetch(route, {
       method, credentials:'same-origin', cache:'no-store',
       headers: {'Content-Type':'application/json', ...(session ? {'X-CSRF-Token':session.csrf} : {})},
-      ...(data === undefined ? {} : {body:JSON.stringify(data)}),
+      ...(payload === undefined ? {} : {body:payload}),
     });
     const result = await response.json();
     if (!response.ok) {
@@ -119,7 +127,7 @@
     document.getElementById('backupFile').onchange=async event=>{
       try{
         const file=event.target.files[0];if(!file)return;
-        if(file.size>4*1024*1024)throw new Error('Backup must be smaller than 4 MB.');
+        if(file.size>64*1024*1024)throw new Error('Backup must be smaller than 64 MB.');
         previewRestore(JSON.parse(await file.text()),file.name);
       }catch(error){errorText('fileError',error);}
     };
@@ -138,7 +146,7 @@
   }
   async function showSnapshots() {
     const {snapshots}=await api('/api/snapshots');
-    window.modal('Previous revisions','The last 100 saved revisions are available for recovery.',`<div class="table-wrap"><table class="data-table" style="min-width:400px"><thead><tr><th>Revision</th><th>Saved</th><th></th></tr></thead><tbody>${snapshots.map(item=>`<tr><td>${item.revision}</td><td>${escape(new Date(item.created_at).toLocaleString())}</td><td><button class="btn" data-restore-revision="${item.revision}">Review restore</button></td></tr>`).join('') || '<tr><td colspan="3">No previous revisions yet.</td></tr>'}</tbody></table></div>`,footer);
+    window.modal('Previous revisions','Recent saved revisions are available for recovery (20 for large workspaces; up to 100 for smaller workspaces).',`<div class="table-wrap"><table class="data-table" style="min-width:400px"><thead><tr><th>Revision</th><th>Saved</th><th></th></tr></thead><tbody>${snapshots.map(item=>`<tr><td>${item.revision}</td><td>${escape(new Date(item.created_at).toLocaleString())}</td><td><button class="btn" data-restore-revision="${item.revision}">Review restore</button></td></tr>`).join('') || '<tr><td colspan="3">No previous revisions yet.</td></tr>'}</tbody></table></div>`,footer);
     document.querySelectorAll('[data-restore-revision]').forEach(button=>{button.onclick=async()=>{
       try{previewRestore(await api(`/api/snapshots/${button.dataset.restoreRevision}`),`Revision ${button.dataset.restoreRevision}`);}
       catch(error){window.showToast(error.message);}

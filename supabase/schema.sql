@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS reconcileiq.workspace_snapshots (revision INTEGER PRI
 CREATE TABLE IF NOT EXISTS reconcileiq.login_attempts (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_connections (id INTEGER PRIMARY KEY, generation TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_oauth (state_hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reconcileiq.import_jobs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES reconcileiq.app_users(id), file_id TEXT NOT NULL, status TEXT NOT NULL, info TEXT NOT NULL, error TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reconcileiq.import_chunks (job_id TEXT NOT NULL REFERENCES reconcileiq.import_jobs(id) ON DELETE CASCADE, sheet_key TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(job_id,sheet_key,chunk_index));
 CREATE INDEX IF NOT EXISTS sessions_expiry ON reconcileiq.app_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS audit_created ON reconcileiq.audit_events(created_at);
 
@@ -29,6 +31,8 @@ ALTER TABLE reconcileiq.workspace_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.login_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.onedrive_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.onedrive_oauth ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.import_jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.import_chunks ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA reconcileiq FROM PUBLIC;
 
 REVOKE ALL ON SCHEMA reconcileiq FROM anon, authenticated;

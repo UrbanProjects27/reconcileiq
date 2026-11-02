@@ -12,7 +12,6 @@
 
 # The modern-function tracer leaves the legacy HTTP adapter's require() calls
 # external. Include only these production packages and their transitive deps.
-[functions.api]
   included_files = [
     "node_modules/serverless-http/**",
     "node_modules/pg*/**",
@@ -39,7 +38,8 @@
     "node_modules/worker-f/**",
     "node_modules/unzipper-esm/**",
     "node_modules/graceful-fs/**",
-    "node_modules/node-int64/**"
+    "node_modules/node-int64/**",
+    "node_modules/sax/**"
   ]
 
 [[headers]]

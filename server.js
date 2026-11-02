@@ -7,6 +7,9 @@ const { emptyState, validateState } = require('./lib/state');
 const { digest, publicUser, hashPassword, verifyPassword, createUser } = require('./lib/auth');
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
 const {definitions:importDefinitions,prepareImport} = require('./lib/import');
+const {createBulkImport}=require('./lib/bulk-import');
+const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
+const {gzipSync,gunzipSync}=require('node:zlib');
 
 const staticFiles = new Map([
   ['/', ['index.html','text/html; charset=utf-8']],
@@ -17,20 +20,29 @@ const staticFiles = new Map([
   ['/overrides.css', ['overrides.css','text/css; charset=utf-8']],
 ]);
 const fail = (status, message) => { const error = new Error(message); error.status = status; throw error; };
-const json = (response, status, body) => { response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8' }); response.end(JSON.stringify(body)); };
-async function body(request) {
+const json = (response, status, body) => { const text=JSON.stringify(body);const compressed=Buffer.byteLength(text)>64*1024;response.writeHead(status, { 'Content-Type':'application/json; charset=utf-8',...(compressed?{'Content-Encoding':'gzip','Vary':'Accept-Encoding'}:{}) }); response.end(compressed?gzipSync(text):text); };
+async function body(request,expandedLimit=4*1024*1024) {
   let size = 0; const chunks = [];
   for await (const chunk of request) {
     size += chunk.length;
     if (size > 4 * 1024 * 1024) fail(413, 'Request exceeds 4 MB.');
     chunks.push(chunk);
   }
-  try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400,'JSON object required.'); return value; }
-  catch { fail(400, 'Invalid JSON request.'); }
+  try {
+    let data=Buffer.concat(chunks);if(request.headers['content-encoding'] && !['gzip','identity'].includes(request.headers['content-encoding']))fail(415,'Unsupported request encoding.');
+    if(data[0]===0x1f && data[1]===0x8b)data=gunzipSync(data,{maxOutputLength:expandedLimit});
+    if(data.length>expandedLimit)fail(413,'Expanded request exceeds the data limit.');let value=JSON.parse(data.toString('utf8'));
+    if(value && typeof value.__reconcileiqGzip==='string' && Object.keys(value).length===1){
+      if(!/^[a-zA-Z0-9+/]*={0,2}$/.test(value.__reconcileiqGzip))fail(400,'Invalid compressed JSON request.');
+      value=JSON.parse(gunzipSync(Buffer.from(value.__reconcileiqGzip,'base64'),{maxOutputLength:expandedLimit}).toString('utf8'));
+    }
+    if(!value || typeof value!=='object' || Array.isArray(value))fail(400,'JSON object required.');return value;
+  }
+  catch (error) { if(error.status)throw error;if(error.code==='ERR_BUFFER_TOO_LARGE')fail(413,'Expanded request exceeds the data limit.');fail(400, 'Invalid JSON request.'); }
 }
 const readWorkspace = async db => {
   const [row] = await db.query('SELECT revision,data FROM workspace WHERE id=1');
-  return { revision: row.revision, state: JSON.parse(row.data) };
+  return { revision: row.revision, state: decodeState(row.data) };
 };
 async function audit(query, user, action, detail) {
   await query('INSERT INTO audit_events(id,actor_id,actor_name,action,detail,created_at) VALUES($1,$2,$3,$4,$5,$6)', [randomUUID(),user.id,user.name,action,JSON.stringify(detail),new Date().toISOString()]);
@@ -49,6 +61,7 @@ async function createApplication(options = {}) {
   if (production && !configuredOrigin) throw new Error('APP_ORIGIN is required for production.');
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
   const onedrive = createOneDrive({db,audit,...options.onedrive});
+  const bulk=createBulkImport({db,onedrive,...options.bulk});
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {
     const [count] = await db.query('SELECT COUNT(*) AS count FROM app_users');
     if (Number(count.count) === 0) await createUser(db, {email:process.env.ADMIN_EMAIL,name:process.env.ADMIN_NAME || 'Workspace Admin',password:process.env.ADMIN_PASSWORD,role:'admin',mustChange:true});
@@ -131,6 +144,13 @@ async function createApplication(options = {}) {
       }
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
+      if(route==='/api/import-jobs'){
+        admin();if(method==='GET')return json(response,200,await bulk.list(session));
+        if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await bulk.start(session,input.fileId,origin));}
+      }
+      if(/^\/api\/import-jobs\/[a-f0-9-]{36}$/i.test(route)){
+        admin();const id=route.split('/').pop();if(method==='GET')return json(response,200,await bulk.get(session,id));if(method==='DELETE')return json(response,200,await bulk.cancel(session,id));
+      }
       if (route.startsWith('/api/onedrive/')) {
         admin();
         if (route === '/api/onedrive/status' && method === 'GET') return json(response,200,await onedrive.status());
@@ -148,14 +168,16 @@ async function createApplication(options = {}) {
       if (route === '/api/state' && method === 'GET') return json(response,200,await readWorkspace(db));
       if (route === '/api/import/definitions' && method === 'GET') {admin();return json(response,200,{definitions:importDefinitions});}
       if (route === '/api/import/preview' && method === 'POST') {
-        admin();const input=await body(request);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
+        admin();const input=await bulk.project(session,await body(request));const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
+        if(unused)encodeState(unused);
         return json(response,200,{...preview,revision:current.revision});
       }
       if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST') || (route === '/api/import' && method === 'POST')) {
         if (session.role === 'viewer') fail(403,'Viewers cannot change workspace data.');
         if (route === '/api/restore') admin();
         if (route === '/api/import') admin();
-        const input = await body(request);
+        let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
+        if(route==='/api/import')input=await bulk.project(session,input);
         if (!Number.isInteger(input.revision) || input.revision < 0) fail(400,'A workspace revision is required.');
         let next = route === '/api/import' ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
@@ -163,16 +185,18 @@ async function createApplication(options = {}) {
           let imported;
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
-            imported=prepareImport(input,JSON.parse(previous.data));
+            imported=prepareImport(input,decodeState(previous.data));
             if(!imported.canImport)fail(400,imported.errors[0]?.message || 'There are no new or changed records to import.');
             next=imported.state;
           }
-          const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[JSON.stringify(next),input.revision]);
+          const encoded=encodeState(next);
+          const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[encoded,input.revision]);
           if (!updated.length) fail(409,'Another user saved changes. Your input is still open; review the latest data and save again.');
           const revision = updated[0].revision;
           await query('INSERT INTO workspace_snapshots(revision,data,created_at) VALUES($1,$2,$3) ON CONFLICT(revision) DO NOTHING',[previous.revision,previous.data,new Date().toISOString()]);
-          await query('DELETE FROM workspace_snapshots WHERE revision < $1',[revision-100]);
-          await audit(query,session,route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(JSON.parse(previous.data),next),...(imported?{type:input.type,counts:imported.counts}:{})});
+          await query('DELETE FROM workspace_snapshots WHERE revision < $1',[revision-(encoded.startsWith('gzip:')?20:100)]);
+          if(imported)await bulk.imported(query,session,input.jobId);
+          await audit(query,session,route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(decodeState(previous.data),next),...(imported?{type:input.type,counts:imported.counts}:{})});
           return {revision,state:next};
         });
         return json(response,200,result);
@@ -219,7 +243,7 @@ async function createApplication(options = {}) {
           const [row] = await query('SELECT revision,data FROM workspace WHERE id=1');
           const events = await query('SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 1000');
           await audit(query,session,'backup.downloaded',{revision:row.revision});
-          return {format:'reconcileiq-backup-v1',createdAt:new Date().toISOString(),revision:row.revision,state:JSON.parse(row.data),audit:events};
+          return {format:'reconcileiq-backup-v1',createdAt:new Date().toISOString(),revision:row.revision,state:decodeState(row.data),audit:events};
         });
         response.setHeader('Content-Disposition','attachment; filename="reconcileiq-backup.json"');
         return json(response,200,snapshot);
@@ -228,7 +252,7 @@ async function createApplication(options = {}) {
       if (/^\/api\/snapshots\/\d+$/.test(route) && method === 'GET') {
         admin(); const [row] = await db.query('SELECT revision,data FROM workspace_snapshots WHERE revision=$1',[Number(route.split('/').pop())]);
         if (!row) fail(404,'Snapshot not found.');
-        return json(response,200,{revision:row.revision,state:JSON.parse(row.data)});
+        return json(response,200,{revision:row.revision,state:decodeState(row.data)});
       }
       fail(404,'API endpoint not found.');
     } catch (error) {

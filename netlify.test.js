@@ -60,3 +60,14 @@ test('Supabase TLS trusts the provider CA and keeps certificate verification ena
   assert.equal(generic.ssl.ca,undefined);
   assert.equal(generic.ssl.rejectUnauthorized,true);
 });
+
+test('Netlify adapter preserves compressed JSON requests and binary gzip responses for large workspaces',async t=>{
+  const {gzipSync,gunzipSync}=require('node:zlib');const db=await openDatabase({url:'',filename:':memory:'});t.after(()=>db.close());
+  await createUser(db,{email:'gzip@example.com',name:'Gzip Admin',password:'A-long-test-password',role:'admin',mustChange:false});
+  const handle=createNetlifyHandler(options=>createApplication({...options,db,skipBootstrap:true}));
+  const login=await handle(new Request(origin+'/api/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({email:'gzip@example.com',password:'A-long-test-password'})}),context);
+  const {csrf}=await login.json();const cookie=login.headers.get('set-cookie').split(';')[0];
+  const state=emptyState();state.invoices=Array.from({length:10001},(_,i)=>({id:`GZIP-${i}`,customer:'Gzip Buyer',date:'2026-11-03',amount:100}));
+  const result=await handle(new Request(origin+'/api/state',{method:'PUT',headers:{Origin:origin,'Content-Type':'application/json',Cookie:cookie,'X-CSRF-Token':csrf},body:JSON.stringify({__reconcileiqGzip:gzipSync(JSON.stringify({revision:0,state})).toString('base64')})}),context);
+  assert.equal(result.status,200);assert.equal(result.headers.get('content-encoding'),'gzip');const decoded=JSON.parse(gunzipSync(Buffer.from(await result.arrayBuffer())).toString('utf8'));assert.equal(decoded.state.invoices.length,10001);
+});

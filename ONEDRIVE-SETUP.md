@@ -117,9 +117,26 @@ replace conflicting transaction records. Customer credit-day mappings can be
 updated explicitly, with update counts shown in the preview. Unrelated workspace
 records are retained.
 
-File limits: 4 MB, 5,000 data rows plus a header per worksheet, 100 columns,
-20 worksheets and 100,000 cells across the workbook. Large archives are rejected
-before parsing. Split larger files into smaller workbooks or CSV files.
+File limit: **100 MB**. Large files use background preparation automatically.
+The browser shows progress and then a sample of the first 50 rows for mapping.
+You can close the dialog and resume from **Microsoft OneDrive → Bulk imports**.
+Prepared data is available for six hours. Only one workbook is prepared at a time.
+Confirmation still happens after the full selected worksheet has been validated;
+the 50-row sample is not the import limit. Confirmation and cancellation remove
+the staged source rows.
+
+Capacity: up to **200,000 records per register**, 200,000 data rows plus a header
+per worksheet, 100 populated columns and 20 worksheets. The preview checks the
+workspace's total capacity before saving. Its decoded data limit is 64 MB, with
+a 3,000 KB compressed envelope for serverless delivery. Staging is bounded to
+256 MB of source values / 64 MB compressed; selected columns are limited to 40 MB.
+Large workspaces keep 20 recovery snapshots to bound storage, smaller ones up to
+100. Registers display 100 records per page, and totals/exports include all records.
+
+Background preparation requires Netlify hosting; local tests exercise the worker
+directly. The worker invocation is signed with the server-only OneDrive token key.
+The source workbook is downloaded into temporary storage and removed after processing.
+No additional Microsoft permissions or paid service are required for this path.
 
 ## References
 
