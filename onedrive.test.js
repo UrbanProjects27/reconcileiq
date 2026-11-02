@@ -5,7 +5,7 @@ const {randomBytes}=require('node:crypto');
 const {openDatabase,postgresSchema,qualifySql,initialize}=require('./lib/database');
 const {createUser}=require('./lib/auth');
 const {createApplication}=require('./server');
-const {configuration,encrypt,decrypt}=require('./lib/onedrive');
+const {configuration,encrypt,decrypt,authorizationFailure}=require('./lib/onedrive');
 const tenant='1770cbe0-4866-4e34-97d2-978a89b96e92';
 const env={ONEDRIVE_CLIENT_ID:'782d5d1c-6640-42f5-9ac7-ed3634562088',ONEDRIVE_TENANT_ID:tenant,ONEDRIVE_CLIENT_SECRET:'test-secret',ONEDRIVE_TOKEN_KEY:randomBytes(32).toString('hex')};
 const account={homeAccountId:'account-id',username:'finance@example.com',tenantId:tenant};
@@ -38,6 +38,15 @@ test('connector configuration and authenticated encryption reject invalid settin
   assert.deepEqual(decrypt(sealed,env.ONEDRIVE_TOKEN_KEY),{secret:'refresh-token'});
   assert.throws(()=>decrypt(sealed,randomBytes(32).toString('hex')));
   const parts=sealed.split('.');parts[2]=randomBytes(16).toString('base64url');assert.throws(()=>decrypt(parts.join('.'),env.ONEDRIVE_TOKEN_KEY));
+});
+test('Microsoft authorization failures expose only safe diagnostic identifiers',()=>{
+  const failure=authorizationFailure({errorCode:'invalid_client',errorMessage:'AADSTS7000215: bad secret secret-sensitive-value',correlationId:tenant,clientSecret:'secret-sensitive-value',accessToken:'access-sensitive-value'});
+  assert.match(failure.message,/client secret Value/);assert.match(failure.message,/AADSTS7000215/);
+  assert.deepEqual(failure.diagnostic,{code:'invalid_client',reference:'AADSTS7000215',correlation:tenant});
+  assert.ok(!JSON.stringify(failure).includes('sensitive-value'));
+  const untrusted=authorizationFailure({errorCode:'bad code <secret>',errorMessage:'secret text',correlationId:'secret text'});
+  assert.equal(untrusted.diagnostic.code,'authorization_failed');assert.ok(!JSON.stringify(untrusted).includes('secret text'));
+  assert.match(authorizationFailure({code:'MODULE_NOT_FOUND'}).message,/MODULE_NOT_FOUND/);
 });
 for(const engine of ['sqlite','postgres']){
   test(`OneDrive requires admin, CSRF, one-time browser-bound state and encrypted cache [${engine}]`,async t=>{
