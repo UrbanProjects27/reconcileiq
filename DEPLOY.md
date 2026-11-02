@@ -1,6 +1,6 @@
 # First deployment: GitHub + Render
 
-The application is prepared locally. Creating accounts, accepting service terms and selecting/paying for hosting require the account owner. No production resources or accounts have been created by this project.
+The application is prepared locally. The repository and Render connection are configured for a free trial. The web service and database can also be provisioned directly through the connected Render integration; render.yaml describes the matching configuration for future Blueprint deployments.
 
 ## 1. Create your accounts
 
@@ -25,12 +25,12 @@ Do not upload `data/`, `.env`, `node_modules/`, local backups or test output. Th
 ## 3. Create the Render Blueprint
 
 1. In Render choose **New → Blueprint**, connect GitHub and select the private `reconcileiq` repository. Grant repository access only as needed.
-2. Render reads `render.yaml` and shows the web service and database it will create. Review the resource names, region and charges. Change names if they conflict with existing resources.
+2. Render reads `render.yaml` and shows the web service and database it will create. Review the resource names and region; both resources should use the Free plan. Change names if they conflict with existing resources.
 3. Enter the prompted values:
    - `ADMIN_EMAIL`: your administrator email.
    - `ADMIN_NAME`: your display name.
    - `ADMIN_PASSWORD`: a unique 12–128 character password.
-4. Create the Blueprint when satisfied with the displayed costs and wait for the web service health check to pass.
+4. Create the Blueprint after confirming both resources are Free and wait for the web service health check to pass.
 
 The Blueprint connects `DATABASE_URL` using the database's internal connection string. Database public access is disabled. The server uses Render's public URL (`RENDER_EXTERNAL_URL`) to verify request origins and listens on Render's supplied port.
 
@@ -41,7 +41,7 @@ Render references: [Blueprint fields](https://render.com/docs/blueprint-spec) an
 ## 4. Verify the live deployment
 
 1. Open the site's `/health` address: it should return `{"ok":true}`.
-2. Sign in using the administrator email and password. A new workspace should be empty.
+2. Sign in using the administrator email and password. A new workspace should be empty. The administrator password supplied by environment bootstrap must be changed on first sign-in.
 3. Remove `ADMIN_PASSWORD` from the web service environment after the first successful setup. It is only used if no user exists. Removing it does not remove your account.
 4. Add a test invoice and adjust the customer's credit days. Confirm Due and Overdue amounts change as expected.
 5. Create an Editor and a Viewer under Settings. Use separate browser sessions to confirm both see shared records, and the Viewer cannot save changes.
@@ -49,6 +49,8 @@ Render references: [Blueprint fields](https://render.com/docs/blueprint-spec) an
 7. Download a JSON backup and test Previous revisions with a disposable test record.
 8. Restart/redeploy the service and verify records remain present.
 9. Check the database's backup policy in Render and arrange independent backups before relying on the app for daily operations.
+
+The free database expires 30 days after creation and has no managed backups. Free web services sleep after idle periods. Export workspace backups regularly and upgrade or migrate before the database expires.
 
 After this, import your existing browser data using the README workflow and share the site's HTTPS link with your team. Creating accounts does not send invitation emails; provide each user their sign-in details privately.
 

@@ -1,10 +1,10 @@
-# Review Render's displayed costs before applying this Blueprint.
+# Free trial: the PostgreSQL database expires after 30 days.
 services:
   - type: web
     name: reconcileiq
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
@@ -26,7 +26,7 @@ services:
 databases:
   - name: reconcileiq-db
     region: singapore
-    plan: 0.1c-256mb
-    diskSizeGB: 5
+    plan: free
+    diskSizeGB: 1
     databaseName: reconcileiq
     ipAllowList: []

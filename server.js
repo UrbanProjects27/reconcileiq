@@ -48,7 +48,7 @@ async function createApplication(options = {}) {
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {
     const [count] = await db.query('SELECT COUNT(*) AS count FROM app_users');
-    if (Number(count.count) === 0) await createUser(db, {email:process.env.ADMIN_EMAIL,name:process.env.ADMIN_NAME || 'Workspace Admin',password:process.env.ADMIN_PASSWORD,role:'admin',mustChange:false});
+    if (Number(count.count) === 0) await createUser(db, {email:process.env.ADMIN_EMAIL,name:process.env.ADMIN_NAME || 'Workspace Admin',password:process.env.ADMIN_PASSWORD,role:'admin',mustChange:true});
   }
   const server = http.createServer(async (request, response) => {
     response.setHeader('Cache-Control','no-store');

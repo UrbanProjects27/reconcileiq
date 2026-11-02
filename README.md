@@ -59,7 +59,7 @@ The server transactionally retains the previous 100 workspace revisions. **Setti
 
 ## Deploy on Render
 
-See [DEPLOY.md](DEPLOY.md) for account setup, repository upload and the deployment checklist. `render.yaml` defines a Node web service and private PostgreSQL database in Singapore. The specified plans incur hosting charges; review the costs shown in Render before creating them.
+See [DEPLOY.md](DEPLOY.md) for account setup, repository upload and the deployment checklist. `render.yaml` defines a Node web service and private PostgreSQL database in Singapore. The current configuration uses free trial plans. The free database expires after 30 days and has no managed backups; the free web service sleeps when idle. Upgrade before ongoing business use.
 
 ## Verification
 
