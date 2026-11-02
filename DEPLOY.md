@@ -38,9 +38,9 @@ Set these environment variables in Netlify through its UI, CLI or API. Runtime v
 | `DATABASE_SSL` | `true` |
 | `ADMIN_EMAIL` | Initial administrator's email |
 | `ADMIN_NAME` | Initial administrator's name |
-| `ADMIN_PASSWORD` | Initial temporary password; remove after bootstrap and redeploy |
+| `ADMIN_PASSWORD` | Optional bootstrap for a fresh installation; current project is already initialized, so leave unset |
 
-Mark `DATABASE_URL` and `ADMIN_PASSWORD` as secrets in the Production context, with Functions scope. Use other scopes only if needed for provider/tooling limitations. Keep all secret values out of Git and chat.
+Mark `DATABASE_URL` (and `ADMIN_PASSWORD` only when using environment bootstrap for a new installation) as secrets in the Production context, with Functions scope. Use other scopes only if needed for provider/tooling limitations. Keep all secret values out of Git and chat.
 
 ### Obtain the database connection URI
 
@@ -70,6 +70,8 @@ Netlify references:
 - https://docs.netlify.com/build/environment-variables/overview/
 
 ## First sign-in and verification
+
+The current project already has its first administrator account. Its temporary sign-in details are stored only in the ignored local file `.env.initial-admin`, outside published assets and Git. The cloud database stores a salted password hash; the plaintext temporary password is not stored in Netlify.
 
 1. `/health` should return `{"ok":true}` and an anonymous `/api/session` request should return `401`.
 2. Sign in with the initial administrator email and temporary password. You must choose a new password before opening financial records.
