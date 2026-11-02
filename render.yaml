@@ -1,0 +1,32 @@
+# Review Render's displayed costs before applying this Blueprint.
+services:
+  - type: web
+    name: reconcileiq
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 24.14.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: reconcileiq-db
+          property: connectionString
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+databases:
+  - name: reconcileiq-db
+    region: singapore
+    plan: 0.1c-256mb
+    diskSizeGB: 5
+    databaseName: reconcileiq
+    ipAllowList: []

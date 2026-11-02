@@ -1,0 +1,20 @@
+{
+  "name": "reconcileiq",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Invoice payment tracking and reconciliation workspace",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "setup": "node --env-file-if-exists=.env scripts/setup.js",
+    "test": "node --test reconciliation.test.js server.test.js"
+  },
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.14"
+  }
+}

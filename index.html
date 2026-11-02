@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ReconcileIQ — Invoice Reconciliation</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="overrides.css" />
+  </head>
+  <body class="signed-out">
+    <div id="authLayer" class="auth-layer"><div class="auth-card"><h1>ReconcileIQ</h1><p>Connecting to your workspace…</p></div></div>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand"><div class="brand-mark"><i></i><b></b><em></em></div><span>reconcile<span>IQ</span></span></div>
+        <div class="workspace-switcher"><div class="switcher-avatar">FD</div><div><strong>Finance Desk</strong><small>Shared workspace</small></div><button aria-label="Switch workspace">⌄</button></div>
+        <nav class="nav" id="nav">
+          <p>WORKSPACE</p>
+          <button class="nav-item active" data-view="dashboard"><span class="nav-icon">▦</span>Dashboard</button>
+          <button class="nav-item" data-view="invoices"><span class="nav-icon">▤</span>Invoice Register</button>
+          <button class="nav-item" data-view="customers"><span class="nav-icon">♧</span>Customer Summary</button>
+          <p>RECONCILIATION</p>
+          <button class="nav-item" data-view="advice"><span class="nav-icon">◫</span>Payment Advice</button>
+          <button class="nav-item" data-view="bank"><span class="nav-icon">⇄</span>Bank Reconciliation<span class="nav-badge" id="bankBadge">0</span></button>
+          <button class="nav-item" data-view="returns"><span class="nav-icon">↩</span>Sales Returns</button>
+          <button class="nav-item" data-view="debit"><span class="nav-icon">⊖</span>Debit Notes</button>
+          <button class="nav-item" data-view="unallocated"><span class="nav-icon">⌁</span>Unallocated<span class="nav-badge blue" id="unallocatedBadge">0</span></button>
+          <p>MANAGEMENT</p>
+          <button class="nav-item" data-view="reports"><span class="nav-icon">◴</span>Reports</button>
+          <button class="nav-item" data-view="sync"><span class="nav-icon">↻</span>Data Synchronisation</button>
+          <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span>Settings</button>
+        </nav>
+        <div class="sidebar-footer"><div class="sync-state"><span></span><div><small>Workspace</small><strong id="lastSyncMini">Shared database</strong></div></div><button class="help-btn">? <span>Help & support</span></button></div>
+      </aside>
+      <main class="main-content">
+        <header class="topbar"><button class="mobile-menu" id="mobileMenu">☰</button><div class="breadcrumb" id="breadcrumb"><span>Workspace</span><b>/</b><strong>Dashboard</strong></div><div class="top-actions"><button class="icon-btn" title="Search">⌕</button><button class="icon-btn notification" title="Notifications">♢<i></i></button><div class="top-user"><div class="user-initials" id="userInitials"></div><div><strong id="userName"></strong><small id="userRole"></small></div><button id="logoutButton" class="btn">Sign out</button></div></div></header>
+        <div id="app"></div>
+      </main>
+    </div>
+    <div class="toast-wrap" id="toastWrap"></div>
+    <div class="modal-layer hidden" id="modalLayer"></div>
+    <script src="auth.js"></script>
+  </body>
+</html>

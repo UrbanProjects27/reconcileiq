@@ -1,0 +1,31 @@
+.status.overadjusted { color: #d4525c; background: #fff0f1; }
+.signed-out .app-shell { display: none; }
+.auth-layer { position: fixed; inset: 0; overflow: auto; display: grid; place-items: center; padding: 24px; background: #f2f5fb; z-index: 50; }
+.auth-layer[hidden] { display: none; }
+.auth-card { width: min(440px, 100%); background: white; border: 1px solid var(--line); border-radius: 16px; padding: 32px; box-shadow: var(--shadow); }
+.auth-brand { font-size: 26px; font-weight: 800; color: var(--navy); margin-bottom: 26px; }
+.auth-brand span { color: var(--blue); }
+.auth-card h1 { font-size: 21px; margin: 0 0 10px; }
+.auth-card p { line-height: 1.65; color: #647087; }
+.auth-help { font-size: 11px; margin-top: 24px; }
+.account-form { display: grid; gap: 14px; }
+.account-form label { display: grid; gap: 7px; font-weight: 700; font-size: 12px; }
+.account-form input, .account-form select { width: 100%; border: 1px solid #dce2ee; border-radius: 6px; padding: 10px; background: #fff; color: var(--ink); }
+.account-form .btn { justify-content: center; }
+.form-error { color: #b52e40 !important; font-size: 12px; white-space: pre-wrap; }
+.form-error:empty { display: none; }
+.team-actions { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 18px 18px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.audit-detail { white-space: normal !important; min-width: 220px; overflow-wrap: anywhere; }
+@media (max-width:760px) { .top-user #logoutButton { display: block; font-size: 10px; padding: 6px; } }
+.status.due { color: #d48f15; background: #fff6df; }
+.mapping-grid input { margin-top: 4px; width: 100%; border: 1px solid #dce2ee; border-radius: 5px; padding: 7px; background: #fff; font-size: 10px; color: #4e5a71; outline: none; }
+.mapping-grid input:focus { border-color: #6d8cea; box-shadow: 0 0 0 2px rgba(76, 114, 223, .12); }
+.kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.balance-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0 12px; }
+.balance-split small { display: block; color: var(--muted); font-size: 10px; margin-bottom: 5px; }
+.balance-split b { display: block; font-size: 18px; letter-spacing: -.4px; }
+@media (max-width: 760px) {
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .balance-split b { font-size: 15px; }
+}
