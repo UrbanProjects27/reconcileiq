@@ -2,12 +2,13 @@ const {test}=require('node:test');const assert=require('node:assert/strict');con
 const {readLargeWorkbook}=require('./lib/bulk-reader');const {createBulkImport,signature,verifySignature}=require('./lib/bulk-import');const {openDatabase,postgresSchema,qualifySql,initialize}=require('./lib/database');const {createUser}=require('./lib/auth');const {encodeState,decodeState}=require('./lib/state-codec');const {emptyState,validateState}=require('./lib/state');const {prepareImport}=require('./lib/import');
 const key='1'.repeat(64),password='Secure-bulk-test-password';
 async function temp(t){const folder=await fsp.mkdtemp(path.join(os.tmpdir(),'reconcileiq-test-'));t.after(async()=>{for(const name of await fsp.readdir(folder))await fsp.unlink(path.join(folder,name));await fsp.rmdir(folder);});return folder;}
-function largeXlsx(filename,rows,paddingMB=0){
+function largeXlsx(filename,rows,paddingMB=0,brokenSummary=false){
   const {Zip,ZipPassThrough,ZipDeflate,strToU8}=require('fflate');const handle=fs.openSync(filename,'wx');const zip=new Zip((error,data)=>{if(error)throw error;fs.writeSync(handle,data);});
   function entry(name,text){const part=new ZipDeflate(name,{level:6});zip.add(part);part.push(strToU8(text),true);}
   entry('[Content_Types].xml','<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>');
-  entry('xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Invoices" r:id="rId1"/></sheets></workbook>');
-  entry('xl/_rels/workbook.xml.rels','<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>');
+  entry('xl/workbook.xml','<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+(brokenSummary?'<sheet name="Summary" r:id="rId0"/>':'')+'<sheet name="Invoices" r:id="rId1"/></sheets></workbook>');
+  entry('xl/_rels/workbook.xml.rels','<Relationships>'+(brokenSummary?'<Relationship Id="rId0" Target="worksheets/summary.xml"/>':'')+'<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>');
+  if(brokenSummary)entry('xl/worksheets/summary.xml','<worksheet><sheetData><row r="1"><c r="A1" t="e"><v>#DIV/0!</v></c></row></sheetData></worksheet>');
   const sheet=new ZipDeflate('xl/worksheets/sheet1.xml',{level:6});zip.add(sheet);sheet.push(strToU8('<worksheet><sheetData>'));
   const cell=(column,row,value)=>`<c r="${column}${row}" t="inlineStr"><is><t>${value}</t></is></c>`;
   for(let i=1;i<=rows+1;i++)sheet.push(strToU8(`<row r="${i}">${i===1?['Invoice','Customer','Date','Amount'].map((v,j)=>cell('ABCD'[j],i,v)).join(''):[`INV-${i-1}`,'Acme','2026-11-03','100'].map((v,j)=>cell('ABCD'[j],i,v)).join('')}</row>`));
@@ -23,6 +24,23 @@ test('streaming reader processes a 70 MB Excel workbook with more than 20,000 ro
   let total=0,largestBatch=0,last;const sheets=[];
   await readLargeWorkbook(filename,async sheet=>sheets.push(sheet),async(key,rows)=>{total+=rows.length;largestBatch=Math.max(largestBatch,rows.length);last=rows.at(-1);});
   assert.equal(total,25002);assert.equal(sheets[0].name,'Invoices');assert.equal(last.v[0],'INV-25001');assert.ok(largestBatch<2000);
+});
+test('an Excel error in a summary is reported per worksheet and valid worksheets remain readable',async t=>{
+  const folder=await temp(t),filename=path.join(folder,'summary-error.xlsx');largeXlsx(filename,3,0,true);const sheets=[],failures=[];let rows=0;
+  await readLargeWorkbook(filename,async sheet=>sheets.push(sheet),async(key,chunk)=>{assert.equal(key,'1');rows+=chunk.length;},async()=>{},async(key,message)=>failures.push({key,message}));
+  assert.equal(failures.length,1);assert.equal(failures[0].key,'0');assert.match(failures[0].message,/Excel error/);assert.equal(sheets[1].name,'Invoices');assert.equal(rows,4);
+  await assert.rejects(()=>readLargeWorkbook(filename,async()=>{},async()=>{}),/Excel error/);
+});
+test('staging removes partial error worksheets and rejects selecting them for import',async t=>{
+  const folder=await temp(t),filename=path.join(folder,'source.xlsx');largeXlsx(filename,3,0,true);
+  const {unzipSync,zipSync,strToU8}=require('fflate');const entries=unzipSync(await fsp.readFile(filename));
+  entries['xl/worksheets/summary.xml']=strToU8('<worksheet><sheetData>'+Array.from({length:1200},(_,i)=>`<row r="${i+1}"><c r="A${i+1}" t="inlineStr"><is><t>Summary row ${i}</t></is></c></row>`).join('')+'<row r="1201"><c r="A1201" t="e"><v>#DIV/0!</v></c></row></sheetData></worksheet>');await fsp.writeFile(filename,zipSync(entries));
+  const db=await openDatabase({url:'',filename:':memory:'});t.after(()=>db.close());const user=await createUser(db,{email:'worksheet@example.com',name:'Worksheet Admin',password,role:'admin',mustChange:false});
+  const service=createBulkImport({db,env:{ONEDRIVE_TOKEN_KEY:key},enqueue:async()=>{},onedrive:{sourceFile:async()=>({name:'source.xlsx',size:1000}),downloadTo:async(id,target)=>fsp.copyFile(filename,target)}});
+  const job=await service.start(user,'source-file','http://localhost');await service.run(job.id);const prepared=await service.get(user,job.id);
+  assert.equal(prepared.status,'ready');assert.match(prepared.info.sheets[0].error,/Excel error/);assert.equal(prepared.info.sheets[0].rowCount,0);assert.equal((await db.query('SELECT * FROM import_chunks WHERE job_id=$1 AND sheet_key=$2',[job.id,'0'])).length,0);
+  const input={jobId:job.id,sheetKey:'0',type:'invoices',mapping:{id:0,customer:1,date:2,amount:3},startRow:2,dateFormat:'iso'};await assert.rejects(()=>service.project(user,input),/worksheet is unavailable/);
+  const projected=await service.project(user,{...input,sheetKey:'1'});assert.equal(prepareImport(projected,emptyState()).counts.added,3);
 });
 test('large financial states round-trip in compressed storage and validate 25,001 invoices',()=>{
   const state=emptyState();state.invoices=Array.from({length:25001},(_,i)=>({id:`INV-${i}`,customer:'Acme',date:'2026-11-03',amount:100}));

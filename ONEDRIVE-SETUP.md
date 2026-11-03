@@ -117,10 +117,14 @@ replace conflicting transaction records. Customer credit-day mappings can be
 updated explicitly, with update counts shown in the preview. Unrelated workspace
 records are retained.
 
-File limit: **100 MB**. Large files use background preparation automatically.
+File limit: **100 MB**. Every Excel workbook uses background preparation, including
+small files with large lookup sheets. Large CSV files use the same background path.
 The browser shows progress and then a sample of the first 50 rows for mapping.
 You can close the dialog and resume from **Microsoft OneDrive → Bulk imports**.
 Prepared data is available for six hours. Only one workbook is prepared at a time.
+Worksheets containing Excel error cells or formulas without saved results are
+marked unavailable; their partially staged rows are removed. Valid worksheets
+remain selectable. Fix an unavailable worksheet in Excel before importing it.
 Confirmation still happens after the full selected worksheet has been validated;
 the 50-row sample is not the import limit. Confirmation and cancellation remove
 the staged source rows.

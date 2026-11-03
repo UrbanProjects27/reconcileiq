@@ -51,12 +51,13 @@ test('Microsoft authorization failures expose only safe diagnostic identifiers',
 for(const engine of ['sqlite','postgres']){
   test(`OneDrive imports download only from Microsoft and never forward Graph credentials [${engine}]`,async t=>{
     const f=await fixture(t,engine);const admin=await f.login();await f.callback(await f.start(admin));
-    let target='https://company.sharepoint.com/download?preauthenticated=value';let size=100;let downloads=0;
+    let target='https://company.sharepoint.com/download?preauthenticated=value';let size=100;let downloads=0;let sourceName='invoices.csv';
     f.observed.mockFetch=(url,options)=>{
-      if(String(url).startsWith('https://graph.microsoft.com/'))return Response.json({file:{},name:'invoices.csv',size,'@microsoft.graph.downloadUrl':target});
+      if(String(url).startsWith('https://graph.microsoft.com/'))return Response.json({file:{},name:sourceName,size,'@microsoft.graph.downloadUrl':target});
       downloads++;assert.equal(options.headers,undefined);return new Response('Invoice,Customer,Date,Amount\nINV-1,Acme,2026-11-03,100');
     };
     const workbook=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(workbook.status,200);const parsed=await workbook.json();assert.equal(parsed.sheets[0].rows[1][0],'INV-1');assert.ok(!JSON.stringify(parsed).includes('preauthenticated'));assert.equal(downloads,1);
+    sourceName='opening-balance.xlsx';size=1104959;const smallExcel=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(smallExcel.status,200);assert.equal((await smallExcel.json()).large,true);assert.equal(downloads,1);sourceName='invoices.csv';size=100;
     target='https://evil.example.com/secret';assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,502);assert.equal(downloads,1);
     target='https://company.sharepoint.com/download';size=70*1024*1024;const large=await f.request('/api/onedrive/workbook?id=file-1','GET',admin);assert.equal(large.status,200);assert.equal((await large.json()).large,true);assert.equal(downloads,1);
     size=101*1024*1024;assert.equal((await f.request('/api/onedrive/workbook?id=file-1','GET',admin)).status,400);assert.equal(downloads,1);
