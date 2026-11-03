@@ -163,6 +163,31 @@ test('multi-brand invoices retain one ledger identity and allocate dashboard bal
   app.run("dashboardBrand='brand:b'");assert.equal(app.run('totals(dashboardData().invoices).pending'),100);
   app.run("dashboardBrand='all'");assert.equal(app.run('totals(dashboardData().invoices).invoice'),1000);assert.equal(app.run('totals(dashboardData().invoices).pending'),500);assert.equal(app.run('allInvoices().length'),1);
 });
+test('invoice ageing uses due dates, keeps negative days, and sorts before pagination',()=>{
+  const app=workspace();app.run(`
+    const shift=days=>new Date(Date.parse(today)+days*86400000).toISOString().slice(0,10);
+    state.invoices=[{id:'FUTURE',customer:'Buyer',date:shift(5),amount:100},{id:'TODAY',customer:'Buyer',date:today,amount:100},{id:'OLDEST',customer:'Buyer',date:shift(-90),amount:100}];
+    state.customerTerms=[{customer:'Buyer',creditDays:0}];state.advice=[];state.returns=[];state.priceReturns=[];
+  `);
+  assert.equal(app.run("allInvoices().find(x=>x.id==='FUTURE').ageing"),-5);assert.equal(app.run("allInvoices().find(x=>x.id==='TODAY').ageing"),0);
+  assert.equal(app.run("invoiceRegisterData().invoices.map(x=>x.id).join(',')"),'OLDEST,TODAY,FUTURE');
+  app.run('state.customerTerms[0].creditDays=30');assert.equal(app.run("allInvoices().find(x=>x.id==='OLDEST').ageing"),60);
+  assert.ok(app.run('renderInvoices()').includes('Ageing (days) ↓'));
+  app.run("globalThis.detailMarkup='';modal=(title,subtitle,content)=>{detailMarkup=content};openInvoice('OLDEST')");
+  assert.ok(!app.run('detailMarkup').includes('<span>Quantity</span>'));assert.ok(!app.run('detailMarkup').includes('<span>Rate</span>'));assert.ok(app.run('detailMarkup').includes('60 days'));
+});
+test('invoice brand and customer filters combine, preserve full mixed-brand invoices and export the selection',()=>{
+  const app=workspace();app.run(`state.invoices=[
+    {id:'MIX',customer:'Alpha',date:today,amount:100,brandName:'A / B',brandAmounts:[{brandName:'A',amount:80},{brandName:'B',amount:20}]},
+    {id:'BETA',customer:'Beta',date:today,amount:200,brandName:'B'},
+    {id:'BLANK',customer:'Alpha',date:today,amount:300}
+  ];state.advice=[];state.returns=[];state.priceReturns=[];invoiceFilter.brand='brand:b';invoiceFilter.customer='customer:alpha';`);
+  assert.equal(app.run("invoiceRegisterData().invoices.map(x=>x.id).join(',')"),'MIX');assert.equal(app.run('invoiceRegisterData().invoices[0].amount'),100);
+  const html=app.run('renderInvoices()');assert.ok(html.includes('id="invoiceBrandFilter"'));assert.ok(html.includes('id="invoiceCustomerFilter"'));assert.ok(html.includes('value="brand:b" selected'));
+  app.run("showToast=()=>{};action('export-invoices',{})");assert.equal(app.context.exportedCSV.split('\r\n').length,2);assert.ok(app.context.exportedCSV.includes('Ageing Days'));
+  app.run("invoiceFilter.brand='unassigned'");assert.equal(app.run("invoiceRegisterData().invoices[0].id"),'BLANK');
+  app.run("pagePositions.invoices=9;action('clear-filters',{})");assert.equal(app.run('invoiceRegisterData().invoices.length'),3);assert.equal(app.run('pagePositions.invoices'),0);
+});
 test('customer export carries both balance categories and customer credit days', () => {
   const app = workspace();
   app.run("showToast=()=>{};exportReport('Customer Outstanding')");
