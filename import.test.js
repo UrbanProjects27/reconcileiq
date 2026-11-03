@@ -98,6 +98,10 @@ test('sales return labels from uploaded workbooks normalize without accepting un
   input.rows[0][1]='unknown';assert.match(prepareImport(input,current).errors[0].message,/Unrecognized return type: unknown/);
   for(const label of ['constructor','__proto__','toString']){input.rows[0][1]=label;assert.equal(prepareImport(input,current).canImport,false,label);}
 });
+test('EPC advice imports normalize type and preserve the actual bank cash amount',()=>{
+  const current=emptyState();current.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:1000}];current.bank=[{ref:'U',customer:'Buyer',date:'2026-11-02',amount:900,status:'matched'}];
+  const input={type:'advice',rows:[['Buyer','I','epc',100,'EPC deduction','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.advice[0].type,'EPC');assert.equal(result.state.advice[0].amount,100);assert.equal(result.state.bank[0].amount,900);assert.equal(prepareImport(input,result.state).counts.skipped,1);
+});
 test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
   const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);

@@ -257,6 +257,20 @@ test('a rejected shared save preserves form input and never reports success', as
   assert.equal(app.run('workspaceRevision'),5);
 });
 
+test('EPC settles the invoice as a deduction while bank matching uses cash only and debit notes are not counted twice',async()=>{
+  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'EPC-I',customer:'Buyer',date:today,amount:1000,brandName:'A / B',brandAmounts:[{brandName:'A',amount:800},{brandName:'B',amount:200}]}];state.returns=[];state.priceReturns=[];state.advice=[{id:'P',invoice:'EPC-I',customer:'Buyer',date:today,type:'Payment',amount:900,utr:'U'},{id:'E',invoice:'EPC-I',customer:'Buyer',date:today,type:'EPC',amount:100,utr:'U'}];state.bank=[{ref:'U',customer:'Buyer',date:today,amount:900,status:'unmatched'}];state.debitNotes=[{id:'D',invoice:'EPC-I',customer:'Buyer',date:today,type:'EPC',amount:100,status:'Unmapped'}];`);
+  assert.equal(app.run('allInvoices()[0].EPC'),100);assert.equal(app.run('allInvoices()[0].Payment'),900);assert.equal(app.run('allInvoices()[0].pending'),0);assert.equal(app.run('allInvoices()[0].autoRoundOff'),0);assert.equal(app.run('totals().epc'),100);assert.equal(app.run('customerRows()[0].epc'),100);
+  app.run("modal=(title,subtitle,content)=>{window.epcDetails=content};openInvoice('EPC-I')");assert.ok(app.run('window.epcDetails').includes('<span>EPC</span>'));
+  app.run("exportReport('Invoice Outstanding')");const lines=app.context.exportedCSV.split('\r\n').map(line=>line.split(','));assert.equal(lines[1][lines[0].indexOf('EPC')],'100');assert.equal(lines[1][lines[0].indexOf('Payment')],'900');
+  app.run("dashboardBrand='brand:a'");assert.equal(app.run('dashboardData().invoices[0].EPC'),80);assert.equal(app.run('totals(dashboardData().invoices).pending'),0);
+  await app.run('matchEligible()');assert.equal(app.run('state.bank[0].status'),'matched');assert.equal(app.run('state.bank[0].amount'),900);
+});
+test('EPC entry can use a matched receipt without offering that receipt for another cash Payment',async()=>{
+  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'I',customer:'Buyer',date:today,amount:1000}];state.returns=[];state.priceReturns=[];state.advice=[{id:'P',invoice:'I',customer:'Buyer',date:today,type:'Payment',amount:900,utr:'U'}];state.bank=[{ref:'U',customer:'Buyer',date:today,amount:900,status:'matched'}];openAdvice();`);
+  assert.equal(app.run('availableBankReceipts().length'),0);app.element('advType').value='EPC';app.element('advType').onchange();assert.ok(app.element('advUtr').innerHTML.includes('value="U"'));
+  app.element('advUtr').value='U';app.element('advUtr').onchange();app.element('advInvoice').value='I';app.element('advType').value='Payment';app.element('advType').onchange();assert.equal(app.element('advUtr').value,'');assert.equal(app.element('advInvoice').value,'');
+  app.element('advType').value='EPC';app.element('advType').onchange();app.element('advUtr').value='U';app.element('advUtr').onchange();app.element('advInvoice').value='I';app.element('advAmount').value='100';app.element('advDescription').value='EPC deduction';await app.element('saveAdvice').onclick();assert.equal(app.run('allInvoices()[0].pending'),0);assert.equal(app.run('state.bank[0].status'),'matched');assert.equal(app.run('state.advice[0].type'),'EPC');
+});
 test('automatic round-off settles signed balances through ten rupees inclusive without changing the ledger',()=>{
   const app=workspace();app.run(`state.invoices=[{id:'ROUND',customer:'Buyer',date:today,amount:1000,roundOff:0}];state.returns=[];state.priceReturns=[];state.advice=[{invoice:'ROUND',type:'Payment',amount:1000}];`);
   for(const remainder of [-10.01,-10,-9.99,-0.01,0,0.01,9.99,10,10.01]){
