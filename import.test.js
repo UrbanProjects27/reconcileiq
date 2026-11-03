@@ -38,6 +38,11 @@ test('bank receipt import does not reset matched status on a repeated import',()
   const result=prepareImport({type:'bank',rows:[['UTR-1','2026-11-03',100]],mapping:{ref:0,date:1,amount:2},startRow:2,dateFormat:'iso'},current);
   assert.equal(result.counts.skipped,1);assert.equal(result.state.bank[0].status,'matched');
 });
+test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
+  const current=prepareImport(invoiceInput(),emptyState()).state;
+  const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);
+  assert.equal(result.canImport,true);assert.equal(result.state.debitNotes[0].type,'EPC');assert.equal(result.state.debitNotes[0].status,'Unmapped');assert.deepEqual(result.state.invoices,current.invoices);assert.deepEqual(result.state.advice,current.advice);
+});
 test('CSV parsing handles BOM, quoted commas and empty columns, and rejects unsupported or oversized files',async()=>{
   const result=await parseWorkbook('invoices.csv',Buffer.from('\ufeffInvoice,Customer,Date,Amount\r\nINV-1,"Acme, Ltd",2026-11-03,"1,000.50"\r\n'));
   assert.equal(result.sheets[0].rows[1][1],'Acme, Ltd');assert.equal(result.sheets[0].rows[1][3],'1,000.50');
