@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomBytes, randomUUID } = require('node:crypto');
 const { openDatabase } = require('./lib/database');
-const { emptyState, validateState, validateBankCustomers } = require('./lib/state');
+const { emptyState, validateState, validateBankCustomers, validateAdviceFields } = require('./lib/state');
 const { digest, publicUser, hashPassword, verifyPassword, createUser } = require('./lib/auth');
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
 const {definitions:importDefinitions,prepareImport} = require('./lib/import');
@@ -209,6 +209,7 @@ async function createApplication(options = {}) {
             next=imported.state;
           }
           validateBankCustomers(next,decodeState(previous.data));
+          validateAdviceFields(next,decodeState(previous.data));
           const encoded=encodeState(next);
           const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[encoded,input.revision]);
           if (!updated.length) fail(409,'Another user saved changes. Your input is still open; review the latest data and save again.');

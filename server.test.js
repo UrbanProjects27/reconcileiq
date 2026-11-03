@@ -52,6 +52,16 @@ integrationTest('bank customers are required on writes while unchanged legacy re
   const saved=await request('/api/state','PUT',{state:added,revision:1},admin);assert.equal(saved.status,200);assert.equal(saved.body.state.bank[1].bankName,'HDFC');
   delete added.bank[1].customer;assert.equal((await request('/api/state','PUT',{state:added,revision:2},admin)).status,400);
 });
+integrationTest('new advice requires invoice and description without blocking unchanged legacy advice',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();const state=emptyState();
+  state.invoices=[{id:'INV',customer:'Acme',date:'2026-11-01',amount:100,code:'—',roundOff:0}];state.customerTerms=[{customer:'Acme',creditDays:45}];
+  state.advice=[{id:'OLD',customer:'Acme',date:'2026-11-02',type:'Payment',amount:10,utr:'UTR'}];
+  await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const next=structuredClone(state);next.advice.push({...state.advice[0],id:'NEW',invoice:'INV',description:'Receipt'});
+  for(const key of ['invoice','description']){const missing=structuredClone(next);delete missing.advice[1][key];assert.equal((await request('/api/state','PUT',{state:missing,revision:1},admin)).status,400);}
+  assert.equal((await request('/api/state','PUT',{state:next,revision:1},admin)).status,200);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);

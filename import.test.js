@@ -38,11 +38,18 @@ test('customer credit-day import updates only the named customers and rejects co
 });
 test('payment advice requires UTR, validates invoice customer and deduplicates distinct advice types',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
-  const input={type:'advice',rows:[['PA-1','Acme','2026-11-03',100,'INV-001','Payment','UTR-1'],['PA-1','Acme','2026-11-03',10,'INV-001','TDS','UTR-1']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5,utr:6},startRow:2,dateFormat:'iso'};
+  const input={type:'advice',rows:[['PA-1','Acme','2026-11-03',100,'INV-001','Payment','UTR-1','Receipt'],['PA-1','Acme','2026-11-03',10,'INV-001','TDS','UTR-1','Tax deducted']],mapping:{customer:1,amount:3,invoice:4,type:5,utr:6,description:7},startRow:2,dateFormat:'iso'};
   const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.advice.length,2);
   assert.equal(prepareImport(input,result.state).counts.skipped,2);
+  const legacy=structuredClone(result.state);legacy.advice.forEach((row,i)=>row.id='OLD-'+i);assert.equal(prepareImport(input,legacy).counts.skipped,2);
   const mismatch=structuredClone(input);mismatch.rows[0][1]='Other';assert.match(prepareImport(mismatch,current).errors[0].message,/Customer must match/);
   const noInvoice=structuredClone(input);noInvoice.rows[0][4]='unknown';assert.match(prepareImport(noInvoice,current).errors[0].message,/Import invoices first/);
+  assert.match(result.state.advice[0].id,/^PA-/);assert.equal(result.state.advice[0].date,current.invoices[0].date);
+  for(const key of ['invoice','type','amount','description']){
+    const missing=structuredClone(input);delete missing.mapping[key];assert.throws(()=>prepareImport(missing,current),/Map /);
+    const blank=structuredClone(input);blank.rows[0][input.mapping[key]]=' ';assert.equal(prepareImport(blank,current).canImport,false);
+  }
+  assert.ok(!require('./lib/import').definitions.advice.fields.some(field=>['id','date'].includes(field.key)));
 });
 test('bank receipt import does not reset matched status on a repeated import',()=>{
   const current=emptyState();current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,customer:'Acme',status:'matched',advice:'PA-1'}];

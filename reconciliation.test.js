@@ -15,7 +15,7 @@ function workspace(saved, shared) {
     return elements.get(id);
   };
   const context = vm.createContext({
-    Intl, Date, console, setTimeout() {}, setInterval() {},
+    Intl, Date, console, crypto:require('node:crypto'), setTimeout() {}, setInterval() {},
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
     document: {
       getElementById: element,
@@ -217,6 +217,15 @@ test('bank entry requires a customer and displays and exports narration and bank
   app.element('bankCustomer').value='Acme';await app.element('saveBank').onclick();
   assert.equal(app.run("state.bank.find(x=>x.ref==='NEW-UTR').bankName"),'HDFC');assert.ok(app.run('renderBank()').includes('Receipt &amp; transfer'));assert.ok(app.run('renderBank()').includes('<th>Bank name</th>'));
   app.run("exportReport('Bank Reconciliation')");assert.ok(app.context.exportedCSV.startsWith('Date,Bank Reference,Customer,Narration,Bank Name,'));assert.ok(app.context.exportedCSV.includes('Receipt & transfer,HDFC'));
+});
+test('payment advice hides number and date and requires allocation details before saving',async()=>{
+  const app=workspace();app.run("showToast=()=>{};openAdvice()");
+  const invoice=app.run('state.invoices[0]'),bank=app.run("state.bank.find(x=>x.status==='unmatched')");
+  for(const [id,value] of Object.entries({advCustomer:invoice.customer,advInvoice:invoice.id,advType:'Payment',advAmount:'10',advDescription:'Receipt allocated',advUtr:bank.ref}))app.element(id).value=value;
+  for(const id of ['advInvoice','advType','advAmount','advDescription']){const previous=app.element(id).value;app.element(id).value='';const before=app.run('state.advice.length');await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice.length'),before);app.element(id).value=previous;}
+  await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice[0].description'),'Receipt allocated');assert.match(app.run('state.advice[0].id'),/^PA-/);assert.equal(app.run('state.advice[0].date'),app.run('today'));
+  assert.ok(!app.run('renderAdvice()').includes('<th>Advice number</th>'));assert.ok(!app.run('renderAdvice()').includes('<th>Date</th>'));
+  app.run("exportReport('Payment Advice')");assert.ok(app.context.exportedCSV.startsWith('Customer,Invoice,Transaction Type,Transaction Description,Amount,Bank Reference / UTR'));
 });
 test('receipt matching sums split payments and flags duplicate references',async()=>{
   const app=workspace();
