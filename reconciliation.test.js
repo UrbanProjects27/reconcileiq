@@ -293,13 +293,23 @@ test('bank entry requires a customer and displays and exports narration and bank
   app.run("exportReport('Bank Reconciliation')");assert.ok(app.context.exportedCSV.startsWith('Date,Bank Reference,Customer,Narration,Bank Name,'));assert.ok(app.context.exportedCSV.includes('Receipt & transfer,HDFC'));
 });
 test('payment advice hides number and date and requires allocation details before saving',async()=>{
-  const app=workspace();app.run("showToast=()=>{};openAdvice()");
+  const app=workspace();app.run("showToast=()=>{};state.bank.find(row=>row.status==='unmatched').customer=state.invoices[0].customer;openAdvice()");
   const invoice=app.run('state.invoices[0]'),bank=app.run("state.bank.find(x=>x.status==='unmatched')");
   for(const [id,value] of Object.entries({advCustomer:invoice.customer,advInvoice:invoice.id,advType:'Payment',advAmount:'10',advDescription:'Receipt allocated',advUtr:bank.ref}))app.element(id).value=value;
   for(const id of ['advInvoice','advType','advAmount','advDescription']){const previous=app.element(id).value;app.element(id).value='';const before=app.run('state.advice.length');await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice.length'),before);app.element(id).value=previous;}
   await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice[0].description'),'Receipt allocated');assert.match(app.run('state.advice[0].id'),/^PA-/);assert.equal(app.run('state.advice[0].date'),app.run('today'));
   assert.ok(!app.run('renderAdvice()').includes('<th>Advice number</th>'));assert.ok(!app.run('renderAdvice()').includes('<th>Date</th>'));
   app.run("exportReport('Payment Advice')");assert.ok(app.context.exportedCSV.startsWith('Customer,Invoice,Transaction Type,Transaction Description,Amount,Bank Reference / UTR'));
+});
+test('receipt selection filters invoices to its buyer and rejects a forged invoice selection',async()=>{
+  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'FLIP',customer:'Flipkart',date:today,amount:100},{id:'OTHER',customer:'Other buyer',date:today,amount:100}];state.bank=[{ref:'F-UTR',customer:'Flipkart',date:today,amount:100,status:'unmatched'},{ref:'O-UTR',customer:'Other buyer',date:today,amount:100,status:'unmatched'}];state.advice=[];openAdvice();`);
+  app.element('advUtr').value='F-UTR';app.element('advUtr').onchange();assert.equal(app.element('advCustomer').value,'Flipkart');assert.ok(app.element('advInvoice').innerHTML.includes('FLIP'));assert.ok(!app.element('advInvoice').innerHTML.includes('OTHER'));
+  for(const [id,value] of Object.entries({advInvoice:'OTHER',advAmount:'10',advType:'Payment',advDescription:'Receipt'}))app.element(id).value=value;await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice.length'),0);
+  app.element('advInvoice').value='FLIP';await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice[0].customer'),'Flipkart');
+  app.run('openAdvice()');app.element('advUtr').value='O-UTR';app.element('advInvoice').value='FLIP';app.element('advUtr').onchange();assert.equal(app.element('advInvoice').value,'');assert.ok(!app.element('advInvoice').innerHTML.includes('FLIP'));
+});
+test('automatic matching cannot relabel a payment to the buyer of mismatched advice',async()=>{
+  const app=workspace();app.run("showToast=()=>{};state.bank=[{ref:'U',customer:'Flipkart',amount:100,status:'unmatched'}];state.advice=[{id:'A',utr:'U',customer:'Other buyer',type:'Payment',amount:100}];");await app.run('matchEligible()');assert.equal(app.run('state.bank[0].status'),'unmatched');assert.equal(app.run('state.bank[0].customer'),'Flipkart');
 });
 test('large bank queues paginate and duplicate UTRs cannot be selected for new advice',()=>{
   const app=workspace();app.run("state.bank=Array.from({length:10001},(_,i)=>({ref:'U'+i,date:today,customer:'Buyer',amount:100,status:'unmatched'}));state.advice=[];state.bank.push({...state.bank[0]});");const html=app.run('renderBank()');assert.equal((html.match(/class="recon-item"/g)||[]).length,100);assert.equal(app.run("pageCounts['bank-queue'].total"),10002);assert.equal(app.run('availableBankReceipts().length'),10000);assert.equal(app.run("availableBankReceipts().some(row=>row.ref==='U0')"),false);
@@ -310,7 +320,7 @@ test('legacy unmapped returns are counted and displayed accurately after recover
 test('receipt matching sums split payments and flags duplicate references',async()=>{
   const app=workspace();
   app.run(`showToast=()=>{};state.bank=[
-    {ref:'UTR',amount:500,status:'unmatched'},
+    {ref:'UTR',customer:'Buyer',amount:500,status:'unmatched'},
     {ref:'DUPLICATE',amount:100,status:'unmatched'},
     {ref:'DUPLICATE',amount:100,status:'unmatched'}
   ];state.advice=[

@@ -55,7 +55,7 @@ integrationTest('bank customers are required on writes while unchanged legacy re
 integrationTest('new advice requires invoice and description without blocking unchanged legacy advice',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();const state=emptyState();
   state.invoices=[{id:'INV',customer:'Acme',date:'2026-11-01',amount:100,code:'—',roundOff:0}];state.customerTerms=[{customer:'Acme',creditDays:45}];
-  state.advice=[{id:'OLD',customer:'Acme',date:'2026-11-02',type:'Payment',amount:10,utr:'UTR'}];
+  state.bank=[{ref:'UTR',customer:'Acme',date:'2026-11-01',amount:100,status:'unmatched'}];state.advice=[{id:'OLD',customer:'Acme',date:'2026-11-02',type:'Payment',amount:10,utr:'UTR'}];
   await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
   assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
   const next=structuredClone(state);next.advice.push({...state.advice[0],id:'NEW',invoice:'INV',description:'Receipt'});
@@ -100,6 +100,13 @@ integrationTest('malformed revisions are rejected before reaching integer databa
   const {request,login}=await fixture(t,engine);const admin=await login();
   assert.equal((await request('/api/state','PUT',{state:emptyState(),revision:1e100},admin)).status,400);
   assert.equal((await request('/api/snapshots/999999999999999999999','GET',undefined,admin)).status,400);
+});
+integrationTest('bank receipt buyer must match advice and invoice on saves and imports',async(t,engine)=>{
+  const {request,login}=await fixture(t,engine);const admin=await login(),state=emptyState();state.invoices=[{id:'F',customer:'Flipkart',date:'2026-11-01',amount:100},{id:'O',customer:'Other',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Flipkart',date:'2026-11-02',amount:100,status:'unmatched'}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const row={id:'A',customer:'Other',invoice:'O',date:'2026-11-03',type:'Payment',amount:10,description:'Receipt',utr:'U'};state.advice=[row];const wrong=await request('/api/state','PUT',{state,revision:1},admin);assert.equal(wrong.status,400);assert.match(wrong.body.error,/same buyer/);
+  row.customer='flipkart';row.invoice='F';assert.equal((await request('/api/state','PUT',{state,revision:1},admin)).status,200);
+  state.bank[0].customer='Other';assert.equal((await request('/api/state','PUT',{state,revision:2},admin)).status,400);
+  const input={type:'advice',rows:[['Other','O','Payment',10,'Receipt','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const preview=await request('/api/import/preview','POST',input,admin);assert.equal(preview.body.canImport,false);assert.match(preview.body.errors[0].message,/same buyer/);assert.equal((await request('/api/import','POST',{...input,revision:2},admin)).status,400);
 });
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);

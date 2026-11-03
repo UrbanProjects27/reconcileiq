@@ -37,7 +37,7 @@ test('customer credit-day import updates only the named customers and rejects co
   assert.equal(prepareImport({...input,rows:[['acme',60],['Acme',30]]},current).canImport,false);
 });
 test('payment advice requires UTR, validates invoice customer and deduplicates distinct advice types',()=>{
-  const current=prepareImport(invoiceInput(),emptyState()).state;
+  const current=prepareImport(invoiceInput(),emptyState()).state;current.bank.push({ref:'UTR-1',customer:'Acme',date:'2026-11-03',amount:100,status:'unmatched'});
   const input={type:'advice',rows:[['PA-1','Acme','2026-11-03',100,'INV-001','Payment','UTR-1','Receipt'],['PA-1','Acme','2026-11-03',10,'INV-001','TDS','UTR-1','Tax deducted']],mapping:{customer:1,amount:3,invoice:4,type:5,utr:6,description:7},startRow:2,dateFormat:'iso'};
   const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.advice.length,2);
   assert.equal(prepareImport(input,result.state).counts.skipped,2);
@@ -50,6 +50,12 @@ test('payment advice requires UTR, validates invoice customer and deduplicates d
     const blank=structuredClone(input);blank.rows[0][input.mapping[key]]=' ';assert.equal(prepareImport(blank,current).canImport,false);
   }
   assert.ok(!require('./lib/import').definitions.advice.fields.some(field=>['id','date'].includes(field.key)));
+});
+test('advice import cannot allocate a bank receipt to a different buyer',()=>{
+  const current=emptyState();current.invoices=[{id:'F',customer:'Flipkart',date:'2026-11-01',amount:100},{id:'O',customer:'Other buyer',date:'2026-11-01',amount:100}];current.bank=[{ref:'U',customer:'Flipkart',date:'2026-11-02',amount:100,status:'unmatched'}];
+  const input={type:'advice',rows:[['Other buyer','O','Payment',10,'Receipt','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const wrong=prepareImport(input,current);assert.equal(wrong.canImport,false);assert.match(wrong.errors[0].message,/tagged to Flipkart/);
+  input.rows[0][0]=' flipkart ';input.rows[0][1]='F';assert.equal(prepareImport(input,current).canImport,true);
+  current.bank[0].customer='';assert.match(prepareImport(input,current).errors[0].message,/Assign a buyer/);current.bank=[];assert.match(prepareImport(input,current).errors[0].message,/Unknown bank receipt/);
 });
 test('bank receipt import does not reset matched status on a repeated import',()=>{
   const current=emptyState();current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,customer:'Acme',status:'matched',advice:'PA-1'}];
