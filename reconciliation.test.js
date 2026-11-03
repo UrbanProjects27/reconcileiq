@@ -217,6 +217,23 @@ test('a rejected shared save preserves form input and never reports success', as
   assert.equal(app.run('workspaceRevision'),5);
 });
 
+test('automatic round-off settles signed balances through ten rupees inclusive without changing the ledger',()=>{
+  const app=workspace();app.run(`state.invoices=[{id:'ROUND',customer:'Buyer',date:today,amount:1000,roundOff:0}];state.returns=[];state.priceReturns=[];state.advice=[{invoice:'ROUND',type:'Payment',amount:1000}];`);
+  for(const remainder of [-10.01,-10,-9.99,-0.01,0,0.01,9.99,10,10.01]){
+    app.context.testRemainder=remainder;app.run('state.advice[0].amount=1000-testRemainder');const invoice=app.run('allInvoices()[0]');
+    const shouldRound=Math.abs(remainder)<=10;assert.equal(invoice.pending,shouldRound?0:remainder);assert.equal(invoice.autoRoundOff,shouldRound?remainder:0);assert.equal(invoice.roundOff,shouldRound?remainder:0);assert.equal(invoice.status==='settled',shouldRound);assert.equal(app.run('state.invoices[0].roundOff'),0);
+  }
+  app.run('state.invoices[0].amount=100.3;state.advice[0].amount=90.3');assert.equal(app.run('allInvoices()[0].pending'),0);assert.equal(app.run('allInvoices()[0].autoRoundOff'),10);
+});
+test('automatic round-off recomputes after returns and payments and appears in totals and exports',()=>{
+  const app=workspace();app.run(`state.invoices=[{id:'ROUND',customer:'Buyer',date:today,amount:1000,roundOff:5,brandName:'A / B',brandAmounts:[{brandName:'A',amount:800},{brandName:'B',amount:200}]}];state.returns=[{invoice:'ROUND',amount:20}];state.priceReturns=[{invoice:'ROUND',amount:5}];state.advice=[{invoice:'ROUND',type:'Payment',amount:960},{invoice:'ROUND',type:'TDS',amount:2}];`);
+  assert.equal(app.run('allInvoices()[0].autoRoundOff'),8);assert.equal(app.run('allInvoices()[0].roundOff'),13);assert.equal(app.run('totals().pending'),0);assert.equal(app.run('customerRows()[0].pending'),0);
+  app.run("showToast=()=>{};exportReport('Invoice Outstanding')");assert.ok(app.context.exportedCSV.includes('Manual Round Off,Automatic Round Off,Round Off'));assert.ok(app.context.exportedCSV.includes(',5,8,13,0,settled'));
+  app.run("dashboardBrand='brand:a'");assert.equal(app.run('dashboardData().invoices[0].autoRoundOff'),6.4);assert.equal(app.run('totals(dashboardData().invoices).pending'),0);
+  app.run('state.advice[0].amount=950');assert.equal(app.run('allInvoices()[0].pending'),18);assert.equal(app.run('allInvoices()[0].autoRoundOff'),0);assert.equal(app.run('allInvoices()[0].roundOff'),5);
+  app.run('state.advice[0].amount=975');assert.equal(app.run('allInvoices()[0].autoRoundOff'),-7);assert.equal(app.run('allInvoices()[0].pending'),0);assert.equal(app.run('state.invoices[0].roundOff'),5);
+  app.run('state.advice.forEach(row=>row.date=today)');const reloaded=workspace(JSON.parse(app.run('JSON.stringify(state)')));assert.equal(reloaded.run('allInvoices()[0].pending'),0);assert.equal(reloaded.run('allInvoices()[0].autoRoundOff'),-7);
+});
 test('round-off form retries against latest data after another user saves',async()=>{
   const initial=workspace().run('clone(seed)');
   const app=workspace(undefined,{state:initial,revision:4,user:{name:'Editor',role:'editor'}});
