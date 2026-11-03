@@ -19,6 +19,17 @@ test('optional invoice order numbers and brands survive import without changing 
   const result=prepareImport(input,emptyState());assert.equal(result.canImport,true);assert.equal(result.state.invoices[0].orderNumber,'000123');assert.equal(result.state.invoices[0].brandName,'Urban & Co');assert.equal(result.state.invoices[0].amount,100);
   assert.equal(prepareImport(invoiceInput(),emptyState()).canImport,true);
 });
+test('brand subtotal imports combine invoices explicitly, preserve brand amounts and safely repeat',()=>{
+  const input={...invoiceInput([['INV-1','Acme','2026-11-03',22811.210000000003,'Veeba'],['INV-1','Acme','2026-11-03',3239.71,'Zyro']]),invoiceRows:'brandAmounts'};input.mapping.brandName=4;
+  assert.equal(prepareImport({...input,invoiceRows:'single'},emptyState()).canImport,false);
+  const result=prepareImport(input,emptyState());assert.equal(result.canImport,true);assert.equal(result.counts.added,1);assert.equal(result.counts.combined,1);
+  assert.equal(result.state.invoices[0].amount,26050.92);assert.equal(result.state.invoices[0].brandName,'Veeba / Zyro');assert.equal(result.state.invoices[0].brandAmounts.length,2);
+  assert.equal(prepareImport(input,result.state).counts.skipped,1);assert.equal(prepareImport({...input,rows:[...input.rows].reverse()},result.state).counts.skipped,1);
+  for(const column of [1,2]){const changed=structuredClone(input);changed.rows[1][column]=column===1?'Other':'2026-11-02';assert.equal(prepareImport(changed,emptyState()).canImport,false);}
+  const duplicate=structuredClone(input);duplicate.rows[1][4]='veeba';assert.match(prepareImport(duplicate,emptyState()).errors[0].message,/repeats brand/);
+  const missing=structuredClone(input);delete missing.mapping.brandName;assert.throws(()=>prepareImport(missing,emptyState()),/Map Brand/);
+  const invalid=structuredClone(result.state);invalid.invoices[0].brandAmounts[0].amount=1;assert.throws(()=>require('./lib/state').validateState(invalid),/must equal/);
+});
 test('customer credit-day import updates only the named customers and rejects conflicting source duplicates',()=>{
   const current=emptyState();current.customerTerms=[{customer:'Acme',creditDays:45},{customer:'Other',creditDays:20}];
   const input={type:'customerTerms',rows:[[' acme ',60]],mapping:{customer:0,creditDays:1},startRow:2};const result=prepareImport(input,current);

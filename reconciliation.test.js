@@ -156,6 +156,13 @@ test('new invoice inherits terms without per-invoice credit or material inputs',
   assert.equal(app.run('allInvoices()[0].creditDays'), 45);
 });
 
+test('multi-brand invoices retain one ledger identity and allocate dashboard balances proportionally',()=>{
+  const app=workspace();
+  app.run(`state.invoices=[{id:'MIX',customer:'Buyer',date:'2026-11-01',amount:1000,brandName:'A / B',brandAmounts:[{brandName:'A',amount:800},{brandName:'B',amount:200}]}];state.advice=[{id:'P',invoice:'MIX',customer:'Buyer',date:'2026-11-02',type:'Payment',amount:500}];state.returns=[];state.priceReturns=[];dashboardBrand='brand:a'`);
+  assert.equal(app.run('dashboardData().invoices.length'),1);assert.equal(app.run('totals(dashboardData().invoices).invoice'),800);assert.equal(app.run('totals(dashboardData().invoices).pending'),400);assert.equal(app.run('dashboardData().payments[0].amount'),400);
+  app.run("dashboardBrand='brand:b'");assert.equal(app.run('totals(dashboardData().invoices).pending'),100);
+  app.run("dashboardBrand='all'");assert.equal(app.run('totals(dashboardData().invoices).invoice'),1000);assert.equal(app.run('totals(dashboardData().invoices).pending'),500);assert.equal(app.run('allInvoices().length'),1);
+});
 test('customer export carries both balance categories and customer credit days', () => {
   const app = workspace();
   app.run("showToast=()=>{};exportReport('Customer Outstanding')");
