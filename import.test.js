@@ -75,6 +75,14 @@ test('returns require all five fields, infer customers and route mixed types wit
   for(const [column,value] of [[1,'Other'],[2,'2026-02-31'],[3,'UNKNOWN'],[4,0]]){const bad=structuredClone(input);bad.rows[0][column]=value;assert.equal(prepareImport(bad,current).canImport,false);}
   assert.ok(!require('./lib/import').definitions.returns.fields.some(f=>f.key==='customer'));
 });
+test('sales return labels from uploaded workbooks normalize without accepting unknown types',()=>{
+  const current=prepareImport(invoiceInput(),emptyState()).state;
+  const input={type:'returns',rows:[['FGM89','sale return','2026-11-02','INV-001',31920]],mapping:{id:0,type:1,date:2,invoice:3,amount:4},startRow:2};
+  for(const label of ['sale return','Sale Return','SALE RETURNS','sales return','Qty returns','Quantity returns']){
+    input.rows[0][1]=label;const result=prepareImport(input,current);assert.equal(result.canImport,true,label);assert.equal(result.state.returns[0].type,'Qty return');assert.equal(result.state.returns[0].amount,31920);
+  }
+  input.rows[0][1]='unknown';assert.match(prepareImport(input,current).errors[0].message,/Unrecognized return type: unknown/);
+});
 test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
   const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);
