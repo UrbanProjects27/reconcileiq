@@ -31,12 +31,13 @@
     document.body.classList.add('signed-out'); layer.hidden = false;
     layer.innerHTML = `<div class="auth-card"><div class="auth-brand">reconcile<span>IQ</span></div>${content}</div>`;
   }
-  function showLogin(message = '') {
+  function showLogin(message = '',email='') {
     showAuth(`<h1>Sign in to your workspace</h1><p>Work together on invoices, collections and reconciliation.</p>
-      <form id="loginForm" class="account-form"><label>Email<input id="loginEmail" type="email" autocomplete="username" required /></label>
+      <form id="loginForm" class="account-form"><label>Email<input id="loginEmail" type="email" autocomplete="username" value="${escape(email)}" required /></label>
       <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required maxlength="128" /></label>
       <p id="loginError" class="form-error" role="alert">${escape(message)}</p><button class="btn primary" type="submit">Sign in</button></form>
-      <p class="auth-help">Contact your finance administrator for an account or password reset.</p>`);
+      <p class="auth-help"><button class="btn" type="button" id="forgotPassword">Forgot password?</button></p><p class="auth-help">Contact your finance administrator for a new account.</p>`);
+    document.getElementById('forgotPassword').onclick=()=>showForgotPassword(document.getElementById('loginEmail').value);
     document.getElementById('loginForm').onsubmit = async event => {
       event.preventDefault(); const button = event.submitter; button.disabled = true;
       try {
@@ -45,6 +46,30 @@
         await openWorkspace();
       } catch(error) { errorText('loginError',error); }
       finally { button.disabled = false; }
+    };
+  }
+  function showForgotPassword(email=''){
+    showAuth(`<h1>Forgot password?</h1><p>Request a reset from your workspace administrators. An administrator must verify your identity and share a reset link with you. This app does not send reset emails automatically.</p><form id="forgotForm" class="account-form"><label>Account email<input id="forgotEmail" type="email" autocomplete="username" value="${escape(email)}" required maxlength="254" /></label><p id="forgotError" class="form-error" role="alert"></p><button class="btn primary" type="submit">Request password reset</button></form><button class="btn" id="forgotBack">Back to sign in</button>`);
+    document.getElementById('forgotBack').onclick=()=>showLogin('',document.getElementById('forgotEmail').value);
+    const form=document.getElementById('forgotForm');
+    form.onsubmit=async event=>{
+      event.preventDefault();const button=event.submitter;button.disabled=true;const address=document.getElementById('forgotEmail').value;
+      try{
+        const result=await api('/api/password-reset/request','POST',{email:address});if(document.getElementById('forgotForm')!==form)return;
+        showAuth(`<h1>Request submitted</h1><p>${escape(result.message)}</p><button class="btn primary" id="resetRequestedBack">Back to sign in</button>`);
+        document.getElementById('resetRequestedBack').onclick=()=>showLogin('',address);
+      }catch(error){errorText('forgotError',error);}finally{button.disabled=false;}
+    };
+  }
+  function showResetLinkForm(token){
+    showAuth(`<h1>Reset your password</h1><p>Choose a password of 12–128 characters. This link works once and expires after 30 minutes.</p><form id="resetLinkForm" class="account-form"><label>New password<input id="resetNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><label>Confirm new password<input id="resetConfirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><p id="resetLinkError" class="form-error" role="alert"></p><button class="btn primary" type="submit">Reset password</button></form><button class="btn" id="resetLinkBack">Request a new link</button>`);
+    document.getElementById('resetLinkBack').onclick=()=>showForgotPassword();
+    document.getElementById('resetLinkForm').onsubmit=async event=>{
+      event.preventDefault();const button=event.submitter;button.disabled=true;
+      try{
+        const password=document.getElementById('resetNewPassword').value;if(password!==document.getElementById('resetConfirmPassword').value)throw new Error('New passwords do not match.');
+        await api('/api/password-reset/complete','POST',{token,password});session=null;showLogin('Password reset. Sign in with your new password.');
+      }catch(error){errorText('resetLinkError',error);}finally{button.disabled=false;}
     };
   }
   async function openWorkspace() {
@@ -86,10 +111,39 @@
     link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   async function showUsers() {
-    const {users}=await api('/api/users');
-    window.modal('Team access','All users work in the same shared workspace.',`<div class="table-wrap"><table class="data-table" style="min-width:580px"><thead><tr><th>User</th><th>Role</th><th>Access</th><th></th></tr></thead><tbody>${users.map(user=>`<tr><td><b>${escape(user.name)}</b><br>${escape(user.email)}</td><td>${escape(user.role)}</td><td>${user.active?'Active':'Disabled'}</td><td>${user.id===session.user.id?'Your account':`<button class="btn" data-edit-user="${escape(user.id)}">Edit</button>`}</td></tr>`).join('')}</tbody></table></div>`,`${footer}<button class="btn primary" id="addUser">Add user</button>`);
+    const [{users},{requests}]=await Promise.all([api('/api/users'),api('/api/password-reset/requests')]);
+    window.modal('Team access','Manage access and password recovery for your shared workspace.',`${requests.length?`<h3>Password reset requests</h3><p>Verify the requester’s identity before sharing a reset link.</p><div class="table-wrap"><table class="data-table"><thead><tr><th>Account</th><th>Requested</th><th>Action</th></tr></thead><tbody>${requests.map(request=>`<tr><td>${escape(request.name)}<br>${escape(request.email)}</td><td>${escape(new Date(request.requested_at).toLocaleString())}</td><td>${request.user_id===session.user.id?'Ask another administrator':`<button class="btn primary" data-reset-user="${escape(request.user_id)}">Reset password</button>`}</td></tr>`).join('')}</tbody></table></div>`:''}<h3>All team members</h3><div class="table-wrap"><table class="data-table" style="min-width:580px"><thead><tr><th>User</th><th>Role</th><th>Access</th><th>Actions</th></tr></thead><tbody>${users.map(user=>`<tr><td><b>${escape(user.name)}</b><br>${escape(user.email)}</td><td>${escape(user.role)}</td><td>${user.active?'Active':'Disabled'}</td><td>${user.id===session.user.id?'<button class="btn" id="changeOwnPassword">Change password</button>':`<button class="btn" data-edit-user="${escape(user.id)}">Edit</button> <button class="btn" data-reset-user="${escape(user.id)}" ${user.active?'':'disabled'}>Reset password</button>`}</td></tr>`).join('')}</tbody></table></div>`,`${footer}<button class="btn primary" id="addUser">Add user</button>`);
     document.getElementById('addUser').onclick=()=>userForm();
     document.querySelectorAll('[data-edit-user]').forEach(button=>{button.onclick=()=>userForm(users.find(user=>user.id===button.dataset.editUser));});
+    document.querySelectorAll('[data-reset-user]').forEach(button=>{button.onclick=()=>showUserReset(users.find(user=>user.id===button.dataset.resetUser));});
+    document.getElementById('changeOwnPassword').onclick=()=>{window.closeModal();showPassword();};
+  }
+  function showUserReset(user){
+    window.modal('Reset password',user.email,`<p><strong>${escape(user.name)}</strong></p><p>Create a reset link so this user can choose their own password. Share it privately after verifying their identity. The link expires in 30 minutes and works once.</p><p id="createResetError" class="form-error" role="alert"></p>`,`${footer}<button class="btn" id="temporaryPasswordOption">Set temporary password</button><button class="btn primary" id="createResetLink">Create reset link</button>`);
+    document.getElementById('temporaryPasswordOption').onclick=()=>showTemporaryPassword(user);
+    document.getElementById('createResetLink').onclick=async event=>{
+      event.target.disabled=true;
+      try{
+        const result=await api(`/api/users/${user.id}/reset-link`,'POST',{});
+        window.modal('Reset link created',user.email,`<p>Share this link privately with ${escape(user.name)}. It expires at ${escape(new Date(result.expiresAt).toLocaleString())} and works once. Existing sessions end when the user resets their password.</p><label class="account-form">Password reset link<input id="createdResetLink" type="text" value="${escape(result.url)}" readonly autocomplete="off" /></label>`,`${footer}<button class="btn" id="resetBackToUsers">Back to team</button><button class="btn primary" id="copyResetLink">Copy link</button>`);
+        document.getElementById('resetBackToUsers').onclick=()=>showUsers().catch(error=>window.showToast(error.message));
+        document.getElementById('copyResetLink').onclick=async()=>{try{await navigator.clipboard.writeText(result.url);window.showToast('Reset link copied. Share it privately.');}catch{document.getElementById('createdResetLink').select();window.showToast('Select and copy the link from the field.');}};
+      }catch(error){errorText('createResetError',error);event.target.disabled=false;}
+    };
+  }
+  function showTemporaryPassword(user){
+    window.modal('Set temporary password',user.email,`<p>This signs the user out of every session. They must change the temporary password on their next sign-in.</p><form id="temporaryPasswordForm" class="account-form"><label>Temporary password<input id="temporaryPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><label>Confirm temporary password<input id="temporaryPasswordConfirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><button class="btn" type="button" id="generateTemporaryPassword">Generate password</button><p id="temporaryPasswordError" class="form-error" role="alert"></p><button class="btn primary" type="submit">Reset password</button></form>`,footer);
+    document.getElementById('generateTemporaryPassword').onclick=()=>{
+      const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';const value=Array.from(crypto.getRandomValues(new Uint8Array(18)),byte=>alphabet[byte&63]).join('');
+      for(const id of ['temporaryPassword','temporaryPasswordConfirm']){const input=document.getElementById(id);input.value=value;input.type='text';}
+    };
+    document.getElementById('temporaryPasswordForm').onsubmit=async event=>{
+      event.preventDefault();const button=event.submitter;button.disabled=true;
+      try{
+        const password=document.getElementById('temporaryPassword').value;if(password!==document.getElementById('temporaryPasswordConfirm').value)throw new Error('Passwords do not match.');
+        await api(`/api/users/${user.id}/reset-password`,'POST',{password});await showUsers();window.showToast('Password reset. Share the temporary password privately.');
+      }catch(error){errorText('temporaryPasswordError',error);}finally{button.disabled=false;}
+    };
   }
   function userForm(user) {
     window.modal(user?'Edit team member':'Add team member','Share temporary passwords privately. New users must change them on first sign-in.',`<form id="teamUserForm" class="account-form">
@@ -97,13 +151,13 @@
       <label>Role<select id="teamRole">${['viewer','editor','admin'].map(role=>`<option ${role===(user?.role || 'viewer')?'selected':''}>${role}</option>`).join('')}</select></label>
       <p>Viewers can read and export. Editors can change financial records. Admins also manage accounts and restore backups.</p>
       ${user?`<label>Access<select id="teamActive"><option value="true" ${user.active?'selected':''}>Active</option><option value="false" ${user.active?'':'selected'}>Disabled</option></select></label>`:''}
-      <label>${user?'Reset password (leave blank to keep)':'Temporary password'}<input id="teamPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" ${user?'':'required'} /></label>
+      ${user?'':'<label>Temporary password<input id="teamPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>'}
       <p id="teamError" class="form-error" role="alert"></p><button class="btn primary" type="submit">Save user</button></form>`,footer);
     document.getElementById('teamUserForm').onsubmit=async event=>{
       event.preventDefault();const button=event.submitter;button.disabled=true;
       try{
         const payload={role:document.getElementById('teamRole').value};
-        const password=document.getElementById('teamPassword').value;
+        const password=document.getElementById('teamPassword')?.value;
         if(password) payload.password=password;
         if(user) payload.active=document.getElementById('teamActive').value==='true';
         else Object.assign(payload,{name:document.getElementById('teamName').value,email:document.getElementById('teamEmail').value});
@@ -161,5 +215,7 @@
   document.getElementById('logoutButton').onclick=async()=>{
     try{await api('/api/logout','POST',{});location.reload();}catch(error){window.showToast?.(error.message);}
   };
-  api('/api/session').then(async value=>{session=value;await openWorkspace();}).catch(error=>showLogin(error.status===401?'':error.message));
+  const resetToken=new URLSearchParams(location.hash.slice(1)).get('reset');
+  if(resetToken){history.replaceState(null,'',location.pathname+location.search);showResetLinkForm(resetToken);}
+  else api('/api/session').then(async value=>{session=value;await openWorkspace();}).catch(error=>showLogin(error.status===401?'':error.message));
 })();

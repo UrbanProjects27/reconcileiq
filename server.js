@@ -8,6 +8,7 @@ const { digest, publicUser, hashPassword, verifyPassword, createUser } = require
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
 const {definitions:importDefinitions,prepareImport} = require('./lib/import');
 const {createBulkImport}=require('./lib/bulk-import');
+const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
 const {gzipSync,gunzipSync}=require('node:zlib');
 
@@ -62,6 +63,7 @@ async function createApplication(options = {}) {
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
   const onedrive = createOneDrive({db,audit,...options.onedrive});
   const bulk=createBulkImport({db,onedrive,...options.bulk});
+  const passwordReset=createPasswordReset({db,audit});
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {
     const [count] = await db.query('SELECT COUNT(*) AS count FROM app_users');
     if (Number(count.count) === 0) await createUser(db, {email:process.env.ADMIN_EMAIL,name:process.env.ADMIN_NAME || 'Workspace Admin',password:process.env.ADMIN_PASSWORD,role:'admin',mustChange:true});
@@ -100,6 +102,13 @@ async function createApplication(options = {}) {
           response.writeHead(303,{Location:'/?onedrive=error&message='+encodeURIComponent(message)}); return response.end();
         }
       }
+      if(route==='/api/password-reset/request' && method==='POST'){
+        const input=await body(request);return json(response,202,await passwordReset.request(input.email,request.socket.remoteAddress || 'unknown'));
+      }
+      if(route==='/api/password-reset/complete' && method==='POST'){
+        const input=await body(request);const result=await passwordReset.complete(input.token,input.password,request.socket.remoteAddress || 'unknown');
+        response.setHeader('Set-Cookie',`riq_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${production?'; Secure':''}`);return json(response,200,result);
+      }
       if (route === '/api/login' && method === 'POST') {
         const input = await body(request);
         const email = String(input.email || '').trim().toLowerCase().slice(0,254);
@@ -136,14 +145,24 @@ async function createApplication(options = {}) {
         if (!await verifyPassword(input.currentPassword,session.password_hash)) fail(400,'Current password is incorrect.');
         const hash = await hashPassword(input.password);
         await db.transaction(async query=>{
+          await query('SELECT id FROM workspace WHERE id=1'+(db.kind==='postgres'?' FOR UPDATE':''));
+          const [current]=await query('SELECT u.password_hash,u.active FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
+          if(!current?.active || current.password_hash!==session.password_hash)fail(409,'Your password changed. Sign in again before continuing.');
           await query('UPDATE app_users SET password_hash=$1,must_change=0 WHERE id=$2',[hash,session.id]);
           await query('DELETE FROM app_sessions WHERE user_id=$1',[session.id]);
+          await revokePasswordResets(query,session.id);
           await audit(query,session,'password.changed',{});
         });
         return json(response,200,{ok:true});
       }
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
+      if(route==='/api/password-reset/requests' && method==='GET'){admin();return json(response,200,await passwordReset.requests());}
+      const resetAction=route.match(/^\/api\/users\/([^/]+)\/(reset-link|reset-password)$/);
+      if(resetAction && method==='POST'){
+        admin();const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;
+        return json(response,200,resetAction[2]==='reset-link'?await passwordReset.issue(session,resetAction[1],origin):await passwordReset.temporary(session,resetAction[1],input.password));
+      }
       if(route==='/api/import-jobs'){
         admin();if(method==='GET')return json(response,200,await bulk.list(session));
         if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await bulk.start(session,input.fileId,origin));}
@@ -223,14 +242,16 @@ async function createApplication(options = {}) {
           // Serialize admin access changes so two admins cannot concurrently
           // disable each other and leave the workspace without an administrator.
           await query('SELECT id FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
-          const [actor] = await query('SELECT active,role FROM app_users WHERE id=$1',[session.id]);
-          if (!actor.active || actor.role !== 'admin') fail(403,'Administrator access has changed. Sign in again.');
-          const [target] = await query('SELECT active,role FROM app_users WHERE id=$1',[id]);
+          const [actor] = await query('SELECT u.active,u.role,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
+          if (!actor?.active || actor.role !== 'admin' || actor.must_change) fail(403,'Administrator access has changed. Sign in again.');
+          const [target] = await query('SELECT * FROM app_users WHERE id=$1',[id]);
+          const nextRole=input.role===undefined?target.role:role,nextActive=input.active===undefined?!!target.active:active;
           const [admins] = await query("SELECT COUNT(*) AS count FROM app_users WHERE role='admin' AND active=1");
-          if (target.active && target.role === 'admin' && (!active || role !== 'admin') && Number(admins.count) <= 1) fail(409,'At least one active administrator is required.');
-          await query('UPDATE app_users SET role=$1,active=$2,password_hash=$3,must_change=$4 WHERE id=$5',[role,active?1:0,hash || user.password_hash,hash ? 1 : user.must_change,id]);
+          if (target.active && target.role === 'admin' && (!nextActive || nextRole !== 'admin') && Number(admins.count) <= 1) fail(409,'At least one active administrator is required.');
+          await query('UPDATE app_users SET role=$1,active=$2,password_hash=$3,must_change=$4 WHERE id=$5',[nextRole,nextActive?1:0,hash || target.password_hash,hash ? 1 : target.must_change,id]);
           await query('DELETE FROM app_sessions WHERE user_id=$1',[id]);
-          await audit(query,session,'user.updated',{userId:id,role,active,passwordReset:!!hash});
+          await revokePasswordResets(query,id,!!hash || !nextActive);
+          await audit(query,session,'user.updated',{userId:id,role:nextRole,active:nextActive,passwordReset:!!hash});
         });
         return json(response,200,{ok:true});
       }

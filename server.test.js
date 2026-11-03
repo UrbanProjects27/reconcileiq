@@ -160,6 +160,55 @@ integrationTest('temporary passwords must change; changing roles and passwords r
   assert.equal((await request(`/api/users/${admin.user.id}`,'PATCH',{active:false},admin)).status,400);
 });
 
+integrationTest('forgot-password requests are private, rate-limited and do not reveal account existence',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();
+  const user=await createUser(db,{email:'recover@example.com',name:'Recovery User',password,role:'viewer',mustChange:false});const viewer=await login(user.email);
+  const known=await request('/api/password-reset/request','POST',{email:user.email});const unknown=await request('/api/password-reset/request','POST',{email:'missing@example.com'});
+  assert.equal(known.status,202);assert.deepEqual(known.body,unknown.body);
+  assert.equal((await request('/api/password-reset/requests')).status,401);assert.equal((await request('/api/password-reset/requests','GET',undefined,viewer)).status,403);
+  const pending=await request('/api/password-reset/requests','GET',undefined,admin);assert.equal(pending.body.requests.length,1);assert.equal(pending.body.requests[0].user_id,user.id);
+  for(let i=0;i<2;i++)await request('/api/password-reset/request','POST',{email:user.email});
+  await db.query('UPDATE password_reset_requests SET requested_at=$1 WHERE user_id=$2',['2000-01-01T00:00:00.000Z',user.id]);
+  assert.equal((await request('/api/password-reset/request','POST',{email:user.email})).status,202);
+  assert.equal((await db.query('SELECT requested_at FROM password_reset_requests WHERE user_id=$1',[user.id]))[0].requested_at,'2000-01-01T00:00:00.000Z');
+  assert.equal((await request(`/api/users/${user.id}/reset-link`,'POST',{},viewer)).status,403);
+  assert.equal((await request('/api/password-reset/request','POST',{email:user.email},undefined,{Origin:'https://evil.example.com'})).status,403);
+});
+
+integrationTest('reset links are hashed, expire, work once and revoke existing sessions',async(t,engine)=>{
+  const {request,login,db,admin:user,base}=await fixture(t,engine);const admin=await login();
+  const target=await createUser(db,{email:'reset@example.com',name:'Reset User',password,role:'editor',mustChange:false});const original=await login(target.email);
+  await request('/api/password-reset/request','POST',{email:target.email});
+  assert.equal((await request(`/api/users/${target.id}/reset-link`,'POST',{},admin,{'X-CSRF-Token':'bad'})).status,403);
+  assert.equal((await request(`/api/users/${user.id}/reset-link`,'POST',{},admin)).status,400);
+  const issued=await request(`/api/users/${target.id}/reset-link`,'POST',{},admin);assert.equal(issued.status,200);assert.equal(new URL(issued.body.url).origin,base);
+  const token=new URLSearchParams(new URL(issued.body.url).hash.slice(1)).get('reset');assert.match(token,/^[-_a-zA-Z0-9]{43}$/);
+  const [saved]=await db.query('SELECT * FROM password_reset_tokens WHERE user_id=$1',[target.id]);assert.equal(saved.token_hash,digest(token));assert.ok(!JSON.stringify(saved).includes(token));
+  assert.equal((await request('/api/password-reset/requests','GET',undefined,admin)).body.requests.length,0);
+  const nextPassword='New-reset-password-2026';const completed=await request('/api/password-reset/complete','POST',{token,password:nextPassword});assert.equal(completed.status,200);assert.match(completed.headers.get('set-cookie'),/Max-Age=0/);
+  assert.equal((await request('/api/state','GET',undefined,original)).status,401);assert.equal((await request('/api/login','POST',{email:target.email,password})).status,401);
+  const signedIn=await login(target.email,nextPassword);assert.equal(signedIn.user.mustChange,false);
+  assert.equal((await request('/api/password-reset/complete','POST',{token,password:'Another-reset-password-2026'})).status,400);
+  const expired=await request(`/api/users/${target.id}/reset-link`,'POST',{},admin);const expiredToken=new URLSearchParams(new URL(expired.body.url).hash.slice(1)).get('reset');
+  await db.query('UPDATE password_reset_tokens SET expires_at=$1 WHERE user_id=$2',['2000-01-01T00:00:00.000Z',target.id]);
+  assert.equal((await request('/api/password-reset/complete','POST',{token:expiredToken,password:nextPassword})).status,400);
+  const events=await request('/api/audit','GET',undefined,admin);assert.ok(events.body.events.some(e=>e.action==='password.reset'));assert.ok(!JSON.stringify(events.body).includes(token));assert.ok(!JSON.stringify(events.body).includes(nextPassword));
+});
+
+integrationTest('administrator temporary resets and access changes invalidate outstanding reset links',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();
+  const target=await createUser(db,{email:'temporary-reset@example.com',name:'Temporary Reset',password,role:'viewer',mustChange:false});const old=await login(target.email);
+  const issue=async()=>{const r=await request(`/api/users/${target.id}/reset-link`,'POST',{},admin);assert.equal(r.status,200);return new URLSearchParams(new URL(r.body.url).hash.slice(1)).get('reset');};
+  const replaced=await issue();const latest=await issue();assert.equal((await request('/api/password-reset/complete','POST',{token:replaced,password:'New-temporary-password-2026'})).status,400);
+  const temporary='Temporary-password-2026';assert.equal((await request(`/api/users/${target.id}/reset-password`,'POST',{password:temporary},admin)).status,200);
+  assert.equal((await request('/api/state','GET',undefined,old)).status,401);assert.equal((await request('/api/password-reset/complete','POST',{token:latest,password:temporary})).status,400);
+  const temporarySession=await login(target.email,temporary);assert.equal(temporarySession.user.mustChange,true);assert.equal((await request('/api/state','GET',undefined,temporarySession)).status,403);
+  assert.equal((await request('/api/password','POST',{currentPassword:temporary,password},temporarySession)).status,200);
+  const afterChange=await issue();assert.equal((await request(`/api/users/${target.id}`,'PATCH',{active:false},admin)).status,200);
+  assert.equal((await request('/api/password-reset/complete','POST',{token:afterChange,password:temporary})).status,400);
+  assert.equal((await db.query('SELECT * FROM password_reset_tokens WHERE user_id=$1',[target.id])).length,0);
+});
+
 integrationTest('validation rejects malformed data, duplicate invoices and mismatched buyers without advancing revision', async (t, engine)=>{
   const {request,login}=await fixture(t, engine);const admin=await login();
   const state=emptyState();state.invoices.push({id:'I1',customer:'Buyer',date:'2026-11-02',amount:100});
