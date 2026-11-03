@@ -41,6 +41,17 @@ async function fixture(t, engine) {
   return {db,admin,request,login,base};
 }
 
+integrationTest('bank customers are required on writes while unchanged legacy receipts remain usable',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();
+  const state=emptyState();state.bank=[{ref:'OLD',date:'2026-11-01',amount:100,status:'unmatched'}];
+  await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const changed=structuredClone(state);changed.bank[0].narration='Changed';assert.equal((await request('/api/state','PUT',{state:changed,revision:1},admin)).status,400);
+  const added=structuredClone(state);added.bank.push({...state.bank[0],ref:'NEW'});assert.equal((await request('/api/state','PUT',{state:added,revision:1},admin)).status,400);
+  added.bank[1].customer='Acme';added.bank[1].narration='Receipt';added.bank[1].bankName='HDFC';
+  const saved=await request('/api/state','PUT',{state:added,revision:1},admin);assert.equal(saved.status,200);assert.equal(saved.body.state.bank[1].bankName,'HDFC');
+  delete added.bank[1].customer;assert.equal((await request('/api/state','PUT',{state:added,revision:2},admin)).status,400);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);

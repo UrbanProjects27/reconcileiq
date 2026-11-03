@@ -210,6 +210,14 @@ test('round-off form retries against latest data after another user saves',async
   assert.equal(app.run('workspaceRevision'),6);
 });
 
+test('bank entry requires a customer and displays and exports narration and bank name',async()=>{
+  const app=workspace();app.run('showToast=()=>{};openBankReceipt()');
+  for(const [id,value] of Object.entries({bankRef:'NEW-UTR',bankDate:'2026-11-03',bankAmount:'150',bankCustomer:' ',bankNarration:'Receipt & transfer',bankName:'HDFC'}))app.element(id).value=value;
+  await app.element('saveBank').onclick();assert.equal(app.run("state.bank.some(x=>x.ref==='NEW-UTR')"),false);
+  app.element('bankCustomer').value='Acme';await app.element('saveBank').onclick();
+  assert.equal(app.run("state.bank.find(x=>x.ref==='NEW-UTR').bankName"),'HDFC');assert.ok(app.run('renderBank()').includes('Receipt &amp; transfer'));assert.ok(app.run('renderBank()').includes('<th>Bank name</th>'));
+  app.run("exportReport('Bank Reconciliation')");assert.ok(app.context.exportedCSV.startsWith('Date,Bank Reference,Customer,Narration,Bank Name,'));assert.ok(app.context.exportedCSV.includes('Receipt & transfer,HDFC'));
+});
 test('receipt matching sums split payments and flags duplicate references',async()=>{
   const app=workspace();
   app.run(`showToast=()=>{};state.bank=[

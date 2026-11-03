@@ -45,9 +45,15 @@ test('payment advice requires UTR, validates invoice customer and deduplicates d
   const noInvoice=structuredClone(input);noInvoice.rows[0][4]='unknown';assert.match(prepareImport(noInvoice,current).errors[0].message,/Import invoices first/);
 });
 test('bank receipt import does not reset matched status on a repeated import',()=>{
-  const current=emptyState();current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,status:'matched',advice:'PA-1'}];
-  const result=prepareImport({type:'bank',rows:[['UTR-1','2026-11-03',100]],mapping:{ref:0,date:1,amount:2},startRow:2,dateFormat:'iso'},current);
+  const current=emptyState();current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,customer:'Acme',status:'matched',advice:'PA-1'}];
+  const result=prepareImport({type:'bank',rows:[['UTR-1','2026-11-03',100,'Acme']],mapping:{ref:0,date:1,amount:2,customer:3},startRow:2,dateFormat:'iso'},current);
   assert.equal(result.counts.skipped,1);assert.equal(result.state.bank[0].status,'matched');
+});
+test('bank import requires customers and preserves narration and bank name',()=>{
+  const input={type:'bank',rows:[['UTR-NEW','2026-11-03',100,'Acme','Invoice receipt','HDFC']],mapping:{ref:0,date:1,amount:2,customer:3,narration:4,bankName:5},startRow:2};
+  const result=prepareImport(input,emptyState());assert.equal(result.canImport,true);assert.equal(result.state.bank[0].narration,'Invoice receipt');assert.equal(result.state.bank[0].bankName,'HDFC');
+  const missing=structuredClone(input);delete missing.mapping.customer;assert.throws(()=>prepareImport(missing,emptyState()),/Map Customer name/);
+  missing.mapping.customer=3;missing.rows[0][3]='  ';assert.match(prepareImport(missing,emptyState()).errors[0].message,/Customer name is required/);
 });
 test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
