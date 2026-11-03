@@ -112,11 +112,15 @@ test('new invoice inherits terms without per-invoice credit or material inputs',
   const html = app.element('modalLayer').innerHTML;
   assert.ok(!html.includes('newInvCreditDays'));
   assert.ok(!html.includes('newInvProduct'));
-  for (const [id, value] of Object.entries({newInvId:'NEW',newInvCustomer:'New Customer',newInvAmount:'500',newInvDate:'2026-11-02',newInvRoundOff:'0'})) app.element(id).value = value;
+  for (const [id, value] of Object.entries({newInvId:'NEW',newInvOrderNumber:'000123',newInvCustomer:'New Customer',newInvAmount:'500',newInvDate:'2026-11-02',newInvRoundOff:'0'})) app.element(id).value = value;
   await app.element('saveInvoice').onclick();
   assert.equal(app.run("customerCreditDays('New Customer')"), 45);
   assert.equal(app.run('allInvoices()[0].creditDays'), 45);
   assert.equal(app.run('allInvoices()[0].pending'), 500);
+  assert.equal(app.run('state.invoices[0].orderNumber'),'000123');
+  assert.ok(app.run('renderInvoices()').includes('<th>Order number</th>'));
+  app.run("invoiceFilter.search='000123'");assert.equal((app.run('renderInvoices()').match(/<tr class="clickable"/g)||[]).length,1);
+  app.run("showToast=()=>{};exportReport('Invoice Outstanding')");assert.ok(app.context.exportedCSV.startsWith('Invoice,Order number,Customer,'));assert.ok(app.context.exportedCSV.includes('NEW,000123,New Customer'));
   app.run("action('reset-data',{})");
   assert.equal(app.run('state.customerTerms.length'), 6);
   assert.equal(app.run('allInvoices()[0].creditDays'), 45);

@@ -14,6 +14,11 @@ test('invalid rows block the complete batch and report source rows',()=>{
   assert.throws(()=>prepareImport({...invoiceInput(),mapping:{id:0}},emptyState()),/Map Customer name/);
   assert.throws(()=>prepareImport({...invoiceInput(),mapping:{id:0,customer:0,date:2,amount:3}},emptyState()),/only one field/);
 });
+test('optional invoice order numbers preserve leading zeros through import and validation',()=>{
+  const input=invoiceInput([['INV-1','Acme','2026-11-03',100,'000123']]);input.mapping.orderNumber=4;
+  const result=prepareImport(input,emptyState());assert.equal(result.canImport,true);assert.equal(result.state.invoices[0].orderNumber,'000123');
+  assert.equal(prepareImport(invoiceInput(),emptyState()).canImport,true);
+});
 test('customer credit-day import updates only the named customers and rejects conflicting source duplicates',()=>{
   const current=emptyState();current.customerTerms=[{customer:'Acme',creditDays:45},{customer:'Other',creditDays:20}];
   const input={type:'customerTerms',rows:[[' acme ',60]],mapping:{customer:0,creditDays:1},startRow:2};const result=prepareImport(input,current);
