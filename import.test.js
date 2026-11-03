@@ -62,6 +62,19 @@ test('bank import requires customers and preserves narration and bank name',()=>
   const missing=structuredClone(input);delete missing.mapping.customer;assert.throws(()=>prepareImport(missing,emptyState()),/Map Customer name/);
   missing.mapping.customer=3;missing.rows[0][3]='  ';assert.match(prepareImport(missing,emptyState()).errors[0].message,/Customer name is required/);
 });
+test('returns require all five fields, infer customers and route mixed types without double counting',()=>{
+  const current=prepareImport(invoiceInput(),emptyState()).state;
+  const input={type:'returns',rows:[['R1','Qty return','2026-11-03','INV-001',10],['R1','Price return','2026-11-03','INV-001',5]],mapping:{id:0,type:1,date:2,invoice:3,amount:4},startRow:2};
+  const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.returns[0].amount,10);assert.equal(result.state.priceReturns[0].amount,5);assert.equal(result.state.returns[0].customer,'Acme');assert.equal(result.state.priceReturns[0].type,'Price return');
+  assert.equal(prepareImport(input,result.state).counts.skipped,2);
+  const legacy=structuredClone(result.state);delete legacy.returns[0].type;delete legacy.priceReturns[0].type;assert.equal(prepareImport(input,legacy).counts.skipped,2);
+  for(const key of ['id','type','date','invoice','amount']){
+    const missing=structuredClone(input);delete missing.mapping[key];assert.throws(()=>prepareImport(missing,current),/Map /);
+    const blank=structuredClone(input);blank.rows[0][input.mapping[key]]='';assert.equal(prepareImport(blank,current).canImport,false);
+  }
+  for(const [column,value] of [[1,'Other'],[2,'2026-02-31'],[3,'UNKNOWN'],[4,0]]){const bad=structuredClone(input);bad.rows[0][column]=value;assert.equal(prepareImport(bad,current).canImport,false);}
+  assert.ok(!require('./lib/import').definitions.returns.fields.some(f=>f.key==='customer'));
+});
 test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
   const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);

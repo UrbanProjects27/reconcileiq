@@ -62,6 +62,15 @@ integrationTest('new advice requires invoice and description without blocking un
   for(const key of ['invoice','description']){const missing=structuredClone(next);delete missing.advice[1][key];assert.equal((await request('/api/state','PUT',{state:missing,revision:1},admin)).status,400);}
   assert.equal((await request('/api/state','PUT',{state:next,revision:1},admin)).status,200);
 });
+integrationTest('returns enforce invoice and type on new saves and preserve unchanged legacy records',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();const state=emptyState();
+  state.invoices=[{id:'INV',customer:'Acme',date:'2026-11-01',amount:100,code:'—',roundOff:0}];state.customerTerms=[{customer:'Acme',creditDays:45}];
+  state.returns=[{id:'OLD',customer:'Acme',date:'2026-11-02',amount:10}];await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const next=structuredClone(state);next.returns.push({id:'NEW',customer:'Acme',date:'2026-11-03',amount:5,type:'Qty return',invoice:'INV'});
+  for(const key of ['id','type','date','invoice','amount']){const missing=structuredClone(next);delete missing.returns[1][key];assert.equal((await request('/api/state','PUT',{state:missing,revision:1},admin)).status,400);}
+  assert.equal((await request('/api/state','PUT',{state:next,revision:1},admin)).status,200);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);
