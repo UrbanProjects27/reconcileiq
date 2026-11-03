@@ -108,6 +108,30 @@ integrationTest('bank receipt buyer must match advice and invoice on saves and i
   state.bank[0].customer='Other';assert.equal((await request('/api/state','PUT',{state,revision:2},admin)).status,400);
   const input={type:'advice',rows:[['Other','O','Payment',10,'Receipt','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const preview=await request('/api/import/preview','POST',input,admin);assert.equal(preview.body.canImport,false);assert.match(preview.body.errors[0].message,/same buyer/);assert.equal((await request('/api/import','POST',{...input,revision:2},admin)).status,400);
 });
+integrationTest('only admins delete entries, including through whole-workspace saves; deletions retain snapshots and audit',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();
+  await createUser(db,{email:'delete-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});await createUser(db,{email:'delete-viewer@example.com',name:'Viewer',password,role:'viewer',mustChange:false});const editor=await login('delete-editor@example.com'),viewer=await login('delete-viewer@example.com');
+  const state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'unmatched'}];state.debitNotes=[{id:'D',customer:'Buyer',date:'2026-11-01',amount:10,type:'EPC',status:'Unmapped'}];
+  const saved=await request('/api/state','PUT',{state,revision:0},admin);assert.equal(saved.status,200);
+  for(const [collection,identifier] of [['invoices','I'],['bank','U'],['debitNotes','D']]){
+    for(const user of [editor,viewer])assert.equal((await request('/api/records/delete','POST',{collection,index:0,identifier,revision:1},user)).status,403);
+    const removed=structuredClone(saved.body.state);removed[collection]=[];assert.equal((await request('/api/state','PUT',{state:removed,revision:1},editor)).status,403);
+  }
+  const edited=structuredClone(saved.body.state);edited.invoices[0].brandName='Updated';assert.equal((await request('/api/state','PUT',{state:edited,revision:1},editor)).status,200);
+  assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'I',revision:1},admin)).status,409);
+  assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'I',revision:2},admin,{'X-CSRF-Token':'wrong'})).status,403);
+  let revision=2;for(const [collection,identifier] of [['invoices','I'],['bank','U'],['debitNotes','D']]){const deleted=await request('/api/records/delete','POST',{collection,index:0,identifier,revision},admin);assert.equal(deleted.status,200,JSON.stringify(deleted.body));assert.equal(deleted.body.state[collection].length,0);revision=deleted.body.revision;}
+  const events=await db.query('SELECT detail FROM audit_events WHERE action=$1',['record.deleted']);assert.equal(events.length,3);assert.equal(JSON.parse(events[0].detail).deleted.collection,'invoices');
+  const snapshot=await db.query('SELECT data FROM workspace_snapshots WHERE revision=2');assert.equal(JSON.parse(snapshot[0].data).invoices[0].id,'I');
+});
+integrationTest('linked entries must be removed first and deleted payment allocations reopen bank receipts',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login(),state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'matched',advice:'A'}];state.advice=[{id:'A',customer:'Buyer',date:'2026-11-01',amount:100,invoice:'I',utr:'U',type:'Payment',description:'Receipt'}];state.returns=[{id:'R',customer:'Buyer',date:'2026-11-01',amount:10,invoice:'I',type:'Qty return'}];state.priceReturns=[{id:'P',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',type:'Price return'}];state.debitNotes=[{id:'D',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',type:'EPC',status:'Unmapped'}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  for(const [collection,identifier] of [['invoices','I'],['bank','U']]){const linked=await request('/api/records/delete','POST',{collection,index:0,identifier,revision:1},admin);assert.equal(linked.status,409);assert.match(linked.body.error,/linked/);}
+  assert.equal((await request('/api/records/delete','POST',{collection:'bank',index:0,identifier:'OTHER',revision:1},admin)).status,409);
+  assert.equal((await request('/api/records/delete','POST',{collection:'unsupported',index:0,identifier:'I',revision:1},admin)).status,400);
+  let revision=1;for(const [collection,identifier] of [['advice','A'],['returns','R'],['priceReturns','P'],['debitNotes','D'],['invoices','I'],['bank','U']]){const removed=await request('/api/records/delete','POST',{collection,index:0,identifier,revision},admin);assert.equal(removed.status,200,JSON.stringify(removed.body));revision=removed.body.revision;if(collection==='advice'){assert.equal(removed.body.state.bank[0].status,'unmatched');assert.equal(removed.body.state.bank[0].advice,'');}}
+  const [snapshot]=await db.query('SELECT data FROM workspace_snapshots WHERE revision=1');const restored=await request('/api/restore','POST',{state:JSON.parse(snapshot.data),revision},admin);assert.equal(restored.status,200);assert.equal(restored.body.state.invoices[0].id,'I');assert.equal(restored.body.state.advice.length,1);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);

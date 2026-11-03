@@ -153,7 +153,7 @@
     window.modal(user?'Edit team member':'Add team member','Share temporary passwords privately. New users must change them on first sign-in.',`<form id="teamUserForm" class="account-form">
       ${user?`<p><b>${escape(user.name)}</b><br>${escape(user.email)}</p>`:'<label>Name<input id="teamName" required maxlength="100" /></label><label>Email<input id="teamEmail" type="email" required /></label>'}
       <label>Role<select id="teamRole">${['viewer','editor','admin'].map(role=>`<option ${role===(user?.role || 'viewer')?'selected':''}>${role}</option>`).join('')}</select></label>
-      <p>Viewers can read and export. Editors can change financial records. Admins also manage accounts and restore backups.</p>
+      <p>Viewers can read and export. Editors can add and edit financial records. Only admins can delete entries, manage accounts and restore backups.</p>
       ${user?`<label>Access<select id="teamActive"><option value="true" ${user.active?'selected':''}>Active</option><option value="false" ${user.active?'':'selected'}>Disabled</option></select></label>`:''}
       ${user?'':'<label>Temporary password<input id="teamPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>'}
       <p id="teamError" class="form-error" role="alert"></p><button class="btn primary" type="submit">Save user</button></form>`,footer);

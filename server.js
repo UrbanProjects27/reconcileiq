@@ -10,6 +10,7 @@ const {definitions:importDefinitions,prepareImport} = require('./lib/import');
 const {createBulkImport}=require('./lib/bulk-import');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
+const {requireAdminForRemovals,deleteRecord}=require('./lib/records');
 const {gzipSync,gunzipSync}=require('node:zlib');
 
 const staticFiles = new Map([
@@ -191,21 +192,23 @@ async function createApplication(options = {}) {
         if(unused)encodeState(unused);
         return json(response,200,{...preview,revision:current.revision});
       }
-      if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST') || (route === '/api/import' && method === 'POST')) {
+      if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST') || (route === '/api/import' && method === 'POST') || (route==='/api/records/delete' && method==='POST')) {
         if (session.role === 'viewer') fail(403,'Viewers cannot change workspace data.');
         if (route === '/api/restore') admin();
         if (route === '/api/import') admin();
+        if (route === '/api/records/delete') admin();
         let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
         if(route==='/api/import')input=await bulk.project(session,input);
         if (!Number.isSafeInteger(input.revision) || input.revision < 0 || input.revision>2147483647) fail(400,'A valid workspace revision is required.');
-        let next = route === '/api/import' ? null : validateState(input.state);
+        let next = ['/api/import','/api/records/delete'].includes(route) ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
           const [previous] = await query('SELECT revision,data FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
           const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
           const allowed=route==='/api/state'?['admin','editor']:['admin'];
           if(!actor?.active || actor.must_change || !allowed.includes(actor.role))fail(403,'Your access changed. Sign in again before saving.');
           if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
-          let imported;
+          let imported,deleted;const before=decodeState(previous.data);
+          if(route==='/api/records/delete'){const result=deleteRecord(before,input);next=result.state;deleted=result.deleted;}
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
             imported=prepareImport(input,decodeState(previous.data));
@@ -214,8 +217,8 @@ async function createApplication(options = {}) {
           }
           // Historical backups may predate newly required fields. Their schema
           // is still validated; new-record rules apply to regular writes/imports.
-          if(route!=='/api/restore'){
-            const before=decodeState(previous.data);
+          requireAdminForRemovals(before,next,actor.role);
+          if(!['/api/restore','/api/records/delete'].includes(route)){
             validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);
           }
           const encoded=encodeState(next);
@@ -225,8 +228,8 @@ async function createApplication(options = {}) {
           await query('INSERT INTO workspace_snapshots(revision,data,created_at) VALUES($1,$2,$3) ON CONFLICT(revision) DO NOTHING',[previous.revision,previous.data,new Date().toISOString()]);
           await query('DELETE FROM workspace_snapshots WHERE revision < $1',[revision-(encoded.startsWith('gzip:')?20:100)]);
           if(imported)await bulk.imported(query,session,input.jobId);
-          await audit(query,session,route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(decodeState(previous.data),next),...(imported?{type:input.type,counts:imported.counts}:{})});
-          return {revision,state:next};
+          await audit(query,session,deleted?'record.deleted':route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(before,next),...(imported?{type:input.type,counts:imported.counts}:{}),...(deleted?{deleted}:{})});
+          return {revision,state:next,...(deleted?{deleted}:{})};
         });
         return json(response,200,result);
       }
