@@ -72,8 +72,16 @@ test('returns require all five fields, infer customers and route mixed types wit
     const missing=structuredClone(input);delete missing.mapping[key];assert.throws(()=>prepareImport(missing,current),/Map /);
     const blank=structuredClone(input);blank.rows[0][input.mapping[key]]='';assert.equal(prepareImport(blank,current).canImport,false);
   }
-  for(const [column,value] of [[1,'Other'],[2,'2026-02-31'],[3,'UNKNOWN'],[4,0]]){const bad=structuredClone(input);bad.rows[0][column]=value;assert.equal(prepareImport(bad,current).canImport,false);}
+  for(const [column,value] of [[1,'Other'],[2,'2026-02-31'],[4,0]]){const bad=structuredClone(input);bad.rows[0][column]=value;assert.equal(prepareImport(bad,current).canImport,false);}
   assert.ok(!require('./lib/import').definitions.returns.fields.some(f=>f.key==='customer'));
+});
+test('unknown return invoices warn and skip only those rows, with safe later reimport',()=>{
+  const current=prepareImport(invoiceInput(),emptyState()).state;
+  const input={type:'returns',rows:[['R1','Sale return','2026-11-03','INV-001',10],['R2','Price return','2026-11-03','MISSING',5]],mapping:{id:0,type:1,date:2,invoice:3,amount:4},startRow:2,sourceRows:[2,15]};
+  const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.counts.invalid,0);assert.equal(result.counts.unmatched,1);assert.equal(result.counts.added,1);assert.equal(result.warnings[0].row,15);assert.match(result.warnings[0].message,/MISSING/);assert.equal(result.state.returns.length,1);assert.equal(result.state.priceReturns.length,0);assert.equal(current.returns.length,0);
+  const later=structuredClone(result.state);later.invoices.push({id:'MISSING',customer:'Acme',date:'2026-11-01',amount:100});const retry=prepareImport(input,later);assert.equal(retry.counts.added,1);assert.equal(retry.counts.skipped,1);assert.equal(retry.state.priceReturns.length,1);
+  const unknown={...input,rows:Array.from({length:60},(_,i)=>['U'+i,'Sale return','2026-11-03','MISSING',5]),sourceRows:undefined};const all=prepareImport(unknown,current);assert.equal(all.canImport,false);assert.equal(all.counts.unmatched,60);assert.equal(all.warnings.length,50);assert.equal(all.counts.invalid,0);
+  const invalid=structuredClone(input);invalid.rows[1][4]=0;assert.equal(prepareImport(invalid,current).counts.invalid,1);assert.equal(prepareImport(invalid,current).canImport,false);
 });
 test('sales return labels from uploaded workbooks normalize without accepting unknown types',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;

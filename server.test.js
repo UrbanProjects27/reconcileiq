@@ -71,6 +71,13 @@ integrationTest('returns enforce invoice and type on new saves and preserve unch
   for(const key of ['id','type','date','invoice','amount']){const missing=structuredClone(next);delete missing.returns[1][key];assert.equal((await request('/api/state','PUT',{state:missing,revision:1},admin)).status,400);}
   assert.equal((await request('/api/state','PUT',{state:next,revision:1},admin)).status,200);
 });
+integrationTest('return warnings allow importing valid rows and audit the skipped count',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();const state=emptyState();state.invoices=[{id:'INV',customer:'Acme',date:'2026-11-01',amount:100}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const input={type:'returns',rows:[['R1','sale return','2026-11-03','INV',10],['R2','price return','2026-11-03','UNKNOWN',5]],mapping:{id:0,type:1,date:2,invoice:3,amount:4},startRow:2};
+  const preview=await request('/api/import/preview','POST',input,admin);assert.equal(preview.body.canImport,true);assert.equal(preview.body.errors.length,0);assert.equal(preview.body.warnings.length,1);assert.equal(preview.body.counts.unmatched,1);
+  const saved=await request('/api/import','POST',{...input,revision:preview.body.revision},admin);assert.equal(saved.status,200);assert.equal(saved.body.state.returns.length,1);assert.equal(saved.body.state.priceReturns.length,0);
+  const events=await db.query('SELECT detail FROM audit_events WHERE action=$1',['workspace.imported']);assert.equal(JSON.parse(events[0].detail).counts.unmatched,1);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);

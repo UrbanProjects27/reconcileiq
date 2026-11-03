@@ -54,6 +54,10 @@ test('import preview commits only on confirmation using the reviewed revision',a
   assert.equal(app.run('window.importCalls[1].route'),'/api/import');assert.equal(app.run('window.importCalls[1].input.revision'),7);
   assert.equal(app.run('state.invoices[0].id'),'IMPORTED');assert.equal(app.run('workspaceRevision'),8);
 });
+test('import warnings identify skipped rows and leave valid imports available for confirmation',async()=>{
+  const app=workspace();app.run(`modal=(...args)=>{window.warningModal=args;return {querySelector:selector=>document.getElementById(selector.slice(1))};};window.workspaceAPI=async()=>({revision:1,counts:{added:1,skipped:0,updated:0,invalid:0,blank:0,unmatched:1},errors:[],warnings:[{row:2,message:'Unknown invoice INV-X. This row will be skipped.'}],sample:[],canImport:true});`);
+  await app.run("showImportPreview({type:'returns'},()=>{})");assert.ok(app.run('window.warningModal[2]').includes('Row 2: Unknown invoice INV-X'));assert.ok(app.run('window.warningModal[2]').includes('valid rows can still be imported'));assert.ok(!app.run('window.warningModal[3]').includes('disabled'));
+});
 test('large invoice calculations stay accurate while register HTML is paginated',()=>{
   const empty={invoices:[],returns:[],priceReturns:[],advice:[],bank:[],debitNotes:[],logs:[],customerTerms:[{customer:'Bulk',creditDays:45}]};
   empty.invoices=Array.from({length:25001},(_,i)=>({id:`BULK-${i}`,customer:'Bulk',date:'2026-11-03',amount:100}));empty.advice.push({id:'A-1',invoice:'BULK-0',customer:'Bulk',date:'2026-11-03',amount:20,type:'Payment',utr:'U-1'});
