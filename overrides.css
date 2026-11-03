@@ -29,3 +29,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .balance-split b { font-size: 15px; }
 }
+
+.modal-layer.advice-batch .modal-foot{position:sticky;bottom:0;background:#fff;z-index:2}
