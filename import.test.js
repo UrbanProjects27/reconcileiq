@@ -57,8 +57,14 @@ test('advice import cannot allocate a bank receipt to a different buyer',()=>{
   input.rows[0][0]=' flipkart ';input.rows[0][1]='F';assert.equal(prepareImport(input,current).canImport,true);
   current.bank[0].customer='';assert.match(prepareImport(input,current).errors[0].message,/Assign a buyer/);current.bank=[];assert.match(prepareImport(input,current).errors[0].message,/Unknown bank receipt/);
 });
+test('split cash imports check the total available bank balance and reject over-allocation',()=>{
+  const current=emptyState();current.invoices=[{id:'I1',customer:'Buyer',date:'2026-11-01',amount:100},{id:'I2',customer:'Buyer',date:'2026-11-01',amount:100}];current.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'unmatched'}];
+  const input={type:'advice',rows:[['Buyer','I1','Payment',30,'Part one','U'],['Buyer','I2','Payment',40,'Part two','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const partial=prepareImport(input,current);assert.equal(partial.canImport,true);assert.equal(partial.state.bank[0].status,'review');assert.equal(require('./finance').rows(partial.state)[0].pendingToMatch,30);
+  input.rows.push(['Buyer','I2','Payment',30.01,'Too much','U']);const excess=prepareImport(input,current);assert.equal(excess.canImport,false);assert.match(excess.errors[0].message,/exceed/);assert.equal(excess.state,undefined);input.rows[2][3]=30;const full=prepareImport(input,current);assert.equal(full.canImport,true);assert.equal(full.state.bank[0].status,'matched');assert.equal(require('./finance').rows(full.state)[0].pendingToMatch,0);
+  const legacy=emptyState();legacy.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:120}];legacy.advice=[{id:'OLD',customer:'Buyer',date:'2026-11-01',invoice:'I',type:'Payment',amount:120,utr:'OLD-U',description:'Historical allocation'}];const receipt=prepareImport({type:'bank',rows:[['OLD-U','2026-11-01',100,'Buyer']],mapping:{ref:0,date:1,amount:2,customer:3},startRow:2},legacy);assert.equal(receipt.canImport,true);assert.equal(require('./finance').rows(receipt.state)[0].pendingToMatch,-20);assert.equal(receipt.state.bank[0].status,'review');
+});
 test('bank receipt import does not reset matched status on a repeated import',()=>{
-  const current=emptyState();current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,customer:'Acme',status:'matched',advice:'PA-1'}];
+  const current=emptyState();current.invoices=[{id:'I',customer:'Acme',date:'2026-11-03',amount:100}];current.advice=[{id:'PA-1',invoice:'I',customer:'Acme',date:'2026-11-03',type:'Payment',amount:100,utr:'UTR-1'}];current.bank=[{ref:'UTR-1',date:'2026-11-03',amount:100,customer:'Acme',status:'matched',advice:'PA-1'}];
   const result=prepareImport({type:'bank',rows:[['UTR-1','2026-11-03',100,'Acme']],mapping:{ref:0,date:1,amount:2,customer:3},startRow:2,dateFormat:'iso'},current);
   assert.equal(result.counts.skipped,1);assert.equal(result.state.bank[0].status,'matched');
 });

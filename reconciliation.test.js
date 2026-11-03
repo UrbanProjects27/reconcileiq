@@ -28,6 +28,7 @@ function workspace(saved, shared) {
     Blob: class { constructor(parts) { context.exportedCSV = parts.join(''); } },
     URL: { createObjectURL() { return 'blob:test'; }, revokeObjectURL() {} },
   });
+  vm.runInContext(fs.readFileSync(`${__dirname}/finance.js`, 'utf8'), context);
   vm.runInContext(fs.readFileSync(`${__dirname}/app.js`, 'utf8'), context);
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
@@ -337,12 +338,22 @@ test('receipt selection filters invoices to its buyer and rejects a forged invoi
 test('automatic matching cannot relabel a payment to the buyer of mismatched advice',async()=>{
   const app=workspace();app.run("showToast=()=>{};state.bank=[{ref:'U',customer:'Flipkart',amount:100,status:'unmatched'}];state.advice=[{id:'A',utr:'U',customer:'Other buyer',type:'Payment',amount:100}];");await app.run('matchEligible()');assert.equal(app.run('state.bank[0].status'),'unmatched');assert.equal(app.run('state.bank[0].customer'),'Flipkart');
 });
+test('one receipt funds multiple invoices and shows only its remaining cash in queues and advice',async()=>{
+  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'I1',customer:'Buyer',date:today,amount:3000},{id:'I2',customer:'Buyer',date:today,amount:7000}];state.bank=[{ref:'SPLIT',customer:'Buyer',date:today,amount:10000,status:'unmatched'}];state.advice=[{id:'P1',invoice:'I1',customer:'Buyer',date:today,type:'Payment',amount:3000,utr:'SPLIT'},{id:'P2',invoice:'I2',customer:'Buyer',date:today,type:'Payment',amount:4000,utr:'SPLIT'},{id:'E',invoice:'I2',customer:'Buyer',date:today,type:'EPC',amount:100,utr:'SPLIT'}];state.returns=[];state.priceReturns=[];`);
+  assert.equal(app.run('bankRows()[0].allocatedAmount'),7000);assert.equal(app.run('bankRows()[0].pendingToMatch'),3000);assert.equal(app.run('bankRows()[0].allocationCount'),2);assert.equal(app.run('unallocatedRows()[0].amount'),3000);assert.ok(app.run('renderBank()').includes('Pending to match'));
+  app.run("openAdvice('SPLIT')");assert.equal(app.element('advPending').value,app.run('fMoney(3000)'));app.element('advInvoice').value='I2';app.element('advType').value='Payment';app.element('advAmount').value='3000.01';app.element('advDescription').value='Final cash allocation';await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice.length'),3);
+  app.element('advAmount').value='3000';await app.element('saveAdvice').onclick();assert.equal(app.run('bankRows()[0].pendingToMatch'),0);assert.equal(app.run('bankRows()[0].status'),'matched');assert.equal(app.run('unallocatedRows().length'),0);assert.equal(app.run('availableBankReceipts().length'),0);assert.equal(app.run("availableBankReceipts('EPC').length"),1);
+  app.run("exportReport('Bank Reconciliation')");const exported=require('csv-parse/sync').parse(app.context.exportedCSV);assert.equal(exported[1][exported[0].indexOf('Allocated Payment')],'10000');assert.equal(exported[1][exported[0].indexOf('Pending to Match')],'0');
+});
+test('bank matching preserves paise even when invoice round-off clears a small invoice balance',()=>{
+  const app=workspace();app.run("state.invoices=[{id:'I',customer:'Buyer',date:today,amount:1}];state.advice=[{id:'P',invoice:'I',customer:'Buyer',date:today,type:'Payment',amount:0.99,utr:'U'}];state.bank=[{ref:'U',customer:'Buyer',date:today,amount:1,status:'unmatched'}];state.returns=[];state.priceReturns=[];");assert.equal(app.run('allInvoices()[0].pending'),0);assert.equal(app.run('bankRows()[0].pendingToMatch'),0.01);assert.equal(app.run('bankRows()[0].status'),'review');
+});
 test('Difference receipts appear in unallocated queue and export and can complete same-buyer allocation',async()=>{
-  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'I',customer:'Flipkart',date:today,amount:1000}];state.bank=[{ref:'S24555505',customer:'Flipkart',date:today,amount:1000,status:'review'},{ref:'UNMATCHED',customer:'Flipkart',date:today,amount:20,status:'unmatched'},{ref:'MATCHED',customer:'Flipkart',date:today,amount:30,status:'matched'}];state.advice=[{id:'P',invoice:'I',customer:'Flipkart',date:today,type:'Payment',amount:900,utr:'S24555505'}];state.returns=[];state.priceReturns=[];`);
-  assert.equal(app.run('unallocatedRows().length'),2);const html=app.run('renderUnallocated()');assert.ok(html.includes('S24555505'));assert.ok(html.includes('Difference / reconciliation review required'));assert.ok(html.includes('Flipkart'));assert.ok(!html.includes('>MATCHED</td>'));
-  app.run("exportReport('Unallocated Transactions')");assert.ok(app.context.exportedCSV.includes('S24555505,Flipkart'));assert.ok(app.context.exportedCSV.includes('Difference / reconciliation review required'));
-  app.run("action('allocate-receipt',{ref:'S24555505'})");assert.equal(app.element('advUtr').value,'S24555505');assert.equal(app.element('advCustomer').value,'Flipkart');app.element('advInvoice').value='I';app.element('advType').value='Payment';app.element('advAmount').value='100';app.element('advDescription').value='Balance allocation';await app.element('saveAdvice').onclick();assert.equal(app.run('allInvoices()[0].pending'),0);
-  await app.run('matchEligible()');assert.equal(app.run('state.bank[0].status'),'matched');assert.equal(app.run("unallocatedRows().some(row=>row.ref==='S24555505')"),false);
+  const app=workspace();app.run(`showToast=()=>{};state.invoices=[{id:'I',customer:'Flipkart',date:today,amount:1000},{id:'M',customer:'Flipkart',date:today,amount:30}];state.bank=[{ref:'REVIEW-UTR-TEST',customer:'Flipkart',date:today,amount:1000,status:'review'},{ref:'UNMATCHED',customer:'Flipkart',date:today,amount:20,status:'unmatched'},{ref:'MATCHED',customer:'Flipkart',date:today,amount:30,status:'matched'}];state.advice=[{id:'P',invoice:'I',customer:'Flipkart',date:today,type:'Payment',amount:900,utr:'REVIEW-UTR-TEST'},{id:'PM',invoice:'M',customer:'Flipkart',date:today,type:'Payment',amount:30,utr:'MATCHED'}];state.returns=[];state.priceReturns=[];`);
+  assert.equal(app.run('unallocatedRows().length'),2);const html=app.run('renderUnallocated()');assert.ok(html.includes('REVIEW-UTR-TEST'));assert.ok(html.includes('Difference / reconciliation review required'));assert.ok(html.includes('Flipkart'));assert.ok(!html.includes('>MATCHED</td>'));
+  app.run("exportReport('Unallocated Transactions')");assert.ok(app.context.exportedCSV.includes('REVIEW-UTR-TEST,Flipkart'));assert.ok(app.context.exportedCSV.includes('Difference / reconciliation review required'));
+  app.run("action('allocate-receipt',{ref:'REVIEW-UTR-TEST'})");assert.equal(app.element('advUtr').value,'REVIEW-UTR-TEST');assert.equal(app.element('advCustomer').value,'Flipkart');app.element('advInvoice').value='I';app.element('advType').value='Payment';app.element('advAmount').value='100';app.element('advDescription').value='Balance allocation';await app.element('saveAdvice').onclick();assert.equal(app.run('allInvoices()[0].pending'),0);
+  await app.run('matchEligible()');assert.equal(app.run('state.bank[0].status'),'matched');assert.equal(app.run("unallocatedRows().some(row=>row.ref==='REVIEW-UTR-TEST')"),false);
 });
 test('large bank queues paginate and duplicate UTRs cannot be selected for new advice',()=>{
   const app=workspace();app.run("state.bank=Array.from({length:10001},(_,i)=>({ref:'U'+i,date:today,customer:'Buyer',amount:100,status:'unmatched'}));state.advice=[];state.bank.push({...state.bank[0]});");const html=app.run('renderBank()');assert.equal((html.match(/class="recon-item"/g)||[]).length,100);assert.equal(app.run("pageCounts['bank-queue'].total"),10002);assert.equal(app.run('availableBankReceipts().length'),10000);assert.equal(app.run("availableBankReceipts().some(row=>row.ref==='U0')"),false);
@@ -352,18 +363,18 @@ test('legacy unmapped returns are counted and displayed accurately after recover
 });
 test('receipt matching sums split payments and flags duplicate references',async()=>{
   const app=workspace();
-  app.run(`showToast=()=>{};state.bank=[
+  app.run(`showToast=()=>{};state.invoices=[{id:'I',customer:'Buyer',date:today,amount:550},{id:'D',customer:'Buyer',date:today,amount:100}];state.bank=[
     {ref:'UTR',customer:'Buyer',amount:500,status:'unmatched'},
     {ref:'DUPLICATE',amount:100,status:'unmatched'},
     {ref:'DUPLICATE',amount:100,status:'unmatched'}
   ];state.advice=[
-    {id:'PA1',utr:'UTR',amount:200,type:'Payment',customer:'Buyer'},
-    {id:'PA2',utr:'UTR',amount:300,type:'Payment',customer:'Buyer'},
-    {id:'PA2',utr:'UTR',amount:50,type:'TDS',customer:'Buyer'},
-    {id:'PA3',utr:'DUPLICATE',amount:100,type:'Payment',customer:'Buyer'}
+    {id:'PA1',invoice:'I',date:today,utr:'UTR',amount:200,type:'Payment',customer:'Buyer'},
+    {id:'PA2',invoice:'I',date:today,utr:'UTR',amount:300,type:'Payment',customer:'Buyer'},
+    {id:'PA2',invoice:'I',date:today,utr:'UTR',amount:50,type:'TDS',customer:'Buyer'},
+    {id:'PA3',invoice:'D',date:today,utr:'DUPLICATE',amount:100,type:'Payment',customer:'Buyer'}
   ]`);
   await app.run('matchEligible()');
   assert.equal(app.run('state.bank[0].status'),'matched');
-  assert.equal(app.run('state.bank[1].status'),'unmatched');
-  assert.equal(app.run('state.bank[2].status'),'unmatched');
+  assert.equal(app.run('state.bank[1].status'),'review');
+  assert.equal(app.run('state.bank[2].status'),'review');
 });

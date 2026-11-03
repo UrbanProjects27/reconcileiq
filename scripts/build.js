@@ -3,7 +3,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const destination = path.join(root, 'dist');
 fs.mkdirSync(destination, {recursive:true});
-const files = ['index.html','app.js','auth.js','styles.css','overrides.css'];
+const files = ['index.html','app.js','auth.js','finance.js','styles.css','overrides.css'];
 // Publish only the frontend allowlist. Never publish the repository root.
 for (const entry of fs.readdirSync(destination, {withFileTypes:true})) {
   if (entry.isFile() && !files.includes(entry.name)) fs.unlinkSync(path.join(destination,entry.name));

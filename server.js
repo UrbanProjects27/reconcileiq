@@ -18,6 +18,7 @@ const staticFiles = new Map([
   ['/index.html', ['index.html','text/html; charset=utf-8']],
   ['/app.js', ['app.js','application/javascript; charset=utf-8']],
   ['/auth.js', ['auth.js','application/javascript; charset=utf-8']],
+  ['/finance.js', ['finance.js','application/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css','text/css; charset=utf-8']],
   ['/overrides.css', ['overrides.css','text/css; charset=utf-8']],
 ]);
