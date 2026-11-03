@@ -10,7 +10,8 @@ function workspace(saved, shared) {
     if (!elements.has(id)) elements.set(id, {
       value: '', innerHTML: '', dataset: {},
       classList: { add() {}, remove() {}, toggle() {}, contains() {return true;} },
-      addEventListener() {}, querySelectorAll() { return []; }, append() {},
+      addEventListener(name,handler) {this.listeners??={};this.listeners[name]=handler;}, querySelectorAll() { return []; }, append() {},
+      focus(){this.focused=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},
     });
     return elements.get(id);
   };
@@ -31,6 +32,33 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('late refresh responses cannot overwrite a newer save or another refresh',async()=>{
+  const initial=workspace().run('clone(seed)');const app=workspace(undefined,{state:initial,revision:1,user:{role:'admin'}});
+  let resolveRefresh;app.context.window.workspaceAPI=(route,method,payload)=>method==='PUT'?Promise.resolve({state:payload.state,revision:2}):new Promise(resolve=>{resolveRefresh=resolve;});
+  const refresh=app.context.window.refreshWorkspace(true);app.run('state.invoices[0].amount=999');await app.run('persist()');resolveRefresh({state:initial,revision:1});await refresh;
+  assert.equal(app.run('workspaceRevision'),2);assert.equal(app.run('state.invoices[0].amount'),999);
+  const pending=[];app.context.window.workspaceAPI=()=>new Promise(resolve=>pending.push(resolve));const older=app.context.window.refreshWorkspace(true),newer=app.context.window.refreshWorkspace(true);
+  const latest=JSON.parse(JSON.stringify(initial));latest.invoices[0].amount=1234;pending[1]({state:latest,revision:4});await newer;pending[0]({state:initial,revision:3});await older;assert.equal(app.run('workspaceRevision'),4);assert.equal(app.run('state.invoices[0].amount'),1234);assert.equal(app.run('sharedSession.revision'),4);
+});
+test('open workspaces update due-date ageing and cached status after midnight',()=>{
+  const app=workspace();let now=Date.now();const Clock=class extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};app.context.Date=Clock;
+  app.run(`state.invoices=[{id:'DAY',customer:'Buyer',date:today,amount:100}];state.customerTerms=[{customer:'Buyer',creditDays:0}];state.advice=[];state.returns=[];state.priceReturns=[];invoiceCache=null;window.RECONCILE_TEST_MODE=false;`);
+  assert.equal(app.run('allInvoices()[0].ageing'),0);assert.equal(app.run('allInvoices()[0].status'),'due');now+=86400000;assert.equal(app.run('allInvoices()[0].ageing'),1);assert.equal(app.run('allInvoices()[0].status'),'overdue');
+});
+test('search preserves focus and advice filters and export use the selected rows',()=>{
+  const app=workspace();const input=app.element('invoiceSearch');input.id='invoiceSearch';input.value='INV';input.selectionStart=2;input.selectionEnd=2;input.listeners.input({target:input});assert.equal(input.focused,true);assert.equal(input.selectionStart,2);
+  app.run(`state.advice=[{id:'A',invoice:'INV1',customer:'Alpha',type:'Payment',description:'NEFT transfer',utr:'U1',amount:20},{id:'B',invoice:'INV2',customer:'Beta',type:'TDS',description:'Tax',utr:'U2',amount:2}];adviceFilter={search:'neft',type:'Payment'};`);
+  assert.equal(app.run('filteredAdvice().length'),1);assert.ok(app.run('renderAdvice()').includes('id="adviceTypeFilter"'));app.run("showToast=()=>{};action('export-advice',{})");assert.equal(app.context.exportedCSV.split('\r\n').length,2);assert.ok(app.context.exportedCSV.includes('Alpha'));
+});
+test('exports protect leading-space formulas and carriage returns and status markup escapes quotes',()=>{
+  const app=workspace();assert.equal(app.run('csvEscape("   =1+1")'),"'   =1+1");assert.equal(app.run('csvEscape("a\\rb")'),'"a\rb"');assert.equal(app.run('csvEscape(-10.01)'),'-10.01');
+  const html=app.run('statusMarkup(\'x" onmouseover="alert(1)\')');assert.ok(!html.includes('onmouseover="'));assert.ok(html.includes('&quot;'));assert.ok(app.run('fMoney(10.01)').includes('10.01'));
+});
+test('repeated save clicks do not mutate pending writes and cannot dismiss the saving form',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});let finish;app.context.window.workspaceAPI=(route,method,payload)=>new Promise(resolve=>{finish=()=>resolve({state:payload.state,revision:2});});
+  app.run("showToast=()=>{};openNewInvoice()");for(const [id,value] of Object.entries({newInvId:'ONCE',newInvCustomer:'Buyer',newInvDate:'2026-11-03',newInvAmount:'100',newInvRoundOff:'0'}))app.element(id).value=value;
+  let hidden=false;app.element('modalLayer').classList.add=()=>{hidden=true;};const first=app.element('saveInvoice').onclick();await app.element('saveInvoice').onclick();app.run('closeModal()');assert.equal(hidden,false);assert.equal(app.run("state.invoices.filter(x=>x.id==='ONCE').length"),1);finish();await first;assert.equal(hidden,true);assert.equal(app.run("state.invoices.filter(x=>x.id==='ONCE').length"),1);
+});
 test('legacy customer terms migrate once, persist, and apply to every invoice', () => {
   const original = workspace().run('clone(seed)');
   original.invoices[0].creditDays = 60;
@@ -272,6 +300,12 @@ test('payment advice hides number and date and requires allocation details befor
   await app.element('saveAdvice').onclick();assert.equal(app.run('state.advice[0].description'),'Receipt allocated');assert.match(app.run('state.advice[0].id'),/^PA-/);assert.equal(app.run('state.advice[0].date'),app.run('today'));
   assert.ok(!app.run('renderAdvice()').includes('<th>Advice number</th>'));assert.ok(!app.run('renderAdvice()').includes('<th>Date</th>'));
   app.run("exportReport('Payment Advice')");assert.ok(app.context.exportedCSV.startsWith('Customer,Invoice,Transaction Type,Transaction Description,Amount,Bank Reference / UTR'));
+});
+test('large bank queues paginate and duplicate UTRs cannot be selected for new advice',()=>{
+  const app=workspace();app.run("state.bank=Array.from({length:10001},(_,i)=>({ref:'U'+i,date:today,customer:'Buyer',amount:100,status:'unmatched'}));state.advice=[];state.bank.push({...state.bank[0]});");const html=app.run('renderBank()');assert.equal((html.match(/class="recon-item"/g)||[]).length,100);assert.equal(app.run("pageCounts['bank-queue'].total"),10002);assert.equal(app.run('availableBankReceipts().length'),10000);assert.equal(app.run("availableBankReceipts().some(row=>row.ref==='U0')"),false);
+});
+test('legacy unmapped returns are counted and displayed accurately after recovery',()=>{
+  const app=workspace();app.run("state.returns=[{id:'R1',date:today,amount:100,invoice:'KNOWN'},{id:'R2',date:today,amount:10}];state.priceReturns=[];");const html=app.run('renderReturns()');assert.ok(html.includes('Mapped to invoices</small><b style="color:#1ca37d">1</b>'));assert.ok(html.includes('Unmapped returns</small><b>1</b>'));assert.ok(html.includes('Unallocated'));assert.ok(!html.includes('data-invoice="undefined"'));
 });
 test('receipt matching sums split payments and flags duplicate references',async()=>{
   const app=workspace();

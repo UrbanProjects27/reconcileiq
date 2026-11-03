@@ -78,6 +78,29 @@ integrationTest('return warnings allow importing valid rows and audit the skippe
   const saved=await request('/api/import','POST',{...input,revision:preview.body.revision},admin);assert.equal(saved.status,200);assert.equal(saved.body.state.returns.length,1);assert.equal(saved.body.state.priceReturns.length,0);
   const events=await db.query('SELECT detail FROM audit_events WHERE action=$1',['workspace.imported']);assert.equal(JSON.parse(events[0].detail).counts.unmatched,1);
 });
+integrationTest('historical backup restores preserve legacy records without weakening normal-entry requirements',async(t,engine)=>{
+  const {request,login}=await fixture(t,engine);const admin=await login();const state=emptyState();state.invoices=[{id:'I',customer:'Acme',date:'2026-11-01',amount:100}];
+  state.bank=[{ref:'OLD',date:'2026-11-01',amount:50,status:'unmatched'}];state.returns=[{id:'OLD-R',customer:'Acme',date:'2026-11-01',amount:5}];state.advice=[{id:'OLD-A',customer:'Acme',date:'2026-11-01',amount:10,utr:'OLD',type:'Payment'}];
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,400);const restored=await request('/api/restore','POST',{state,revision:0},admin);assert.equal(restored.status,200,JSON.stringify(restored.body));assert.equal(restored.body.state.bank.length,1);
+  assert.equal((await request('/api/state','PUT',{state:restored.body.state,revision:1},admin)).status,200);
+});
+integrationTest('access is rechecked after request parsing and before financial or user writes',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const transaction=db.transaction;
+  for(const route of ['/api/state','/api/users']){
+    const admin=await login();db.transaction=async fn=>{await db.query('DELETE FROM app_sessions');return transaction(fn);};
+    const payload=route==='/api/state'?{state:emptyState(),revision:0}:{email:'blocked@example.com',name:'Blocked',password,role:'editor'};
+    const response=await request(route,route==='/api/state'?'PUT':'POST',payload,admin);db.transaction=transaction;assert.equal(response.status,403,JSON.stringify(response.body));
+  }
+  const [users]=await db.query('SELECT COUNT(*) AS count FROM app_users');assert.equal(Number(users.count),1);const [workspace]=await db.query('SELECT revision FROM workspace WHERE id=1');assert.equal(workspace.revision,0);
+});
+test('duplicate advice allocations cannot be counted twice while different classifications remain valid',()=>{
+  const state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];const row={id:'A',customer:'Buyer',date:'2026-11-01',amount:10,invoice:'I',utr:'U',type:'Payment'};state.advice=[row,{...row}];assert.throws(()=>validateState(state),/Duplicate payment advice/);state.advice[1].type='TDS';assert.equal(validateState(state).advice.length,2);
+});
+integrationTest('malformed revisions are rejected before reaching integer database columns',async(t,engine)=>{
+  const {request,login}=await fixture(t,engine);const admin=await login();
+  assert.equal((await request('/api/state','PUT',{state:emptyState(),revision:1e100},admin)).status,400);
+  assert.equal((await request('/api/snapshots/999999999999999999999','GET',undefined,admin)).status,400);
+});
 integrationTest('anonymous API access is blocked and only public assets are served', async (t, engine)=>{
   const {request}=await fixture(t, engine);
   assert.equal((await request('/api/state')).status,401);

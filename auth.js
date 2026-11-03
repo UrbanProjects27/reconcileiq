@@ -4,7 +4,7 @@
   let session;
   let appLoaded = false;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const errorText = (id, error) => { document.getElementById(id).textContent = error.message; };
+  const errorText = (id, error) => { const element=document.getElementById(id);if(element)element.textContent = error.message; };
   async function api(route, method = 'GET', data) {
     let payload=data===undefined?undefined:JSON.stringify(data);
     if(payload && new Blob([payload]).size>256*1024 && typeof CompressionStream!=='undefined'){
@@ -19,11 +19,15 @@
       headers: {'Content-Type':'application/json', ...(session ? {'X-CSRF-Token':session.csrf} : {})},
       ...(payload === undefined ? {} : {body:payload}),
     });
-    const result = await response.json();
+    let result;try{result=await response.json();}catch{
+      if(response.ok)throw new Error('The server returned an unreadable response. Refresh and try again.');
+      result={error:response.status===429?'Too many requests. Wait a moment and try again.':'The server could not complete this request. Please try again.'};
+    }
     if (!response.ok) {
       if (response.status === 401 && route !== '/api/login') showLogin('Your session ended. Sign in to continue.');
-      const error = new Error(result.error || 'Request failed.'); error.status = response.status; throw error;
+      const error = new Error(result?.error || 'Request failed.'); error.status = response.status; throw error;
     }
+    if(!result || typeof result!=='object' || Array.isArray(result))throw new Error('The server returned an unreadable response. Refresh and try again.');
     return result;
   }
   window.workspaceAPI = api;
@@ -167,6 +171,7 @@
     };
   }
   function previewRestore(input, source) {
+    if(!input || typeof input!=='object' || Array.isArray(input))throw new Error('Choose a ReconcileIQ workspace JSON file.');
     const next=input.state || input;
     if(!next || !Array.isArray(next.invoices) || !Array.isArray(next.bank) || !Array.isArray(next.advice)) throw new Error('Choose a ReconcileIQ workspace JSON file.');
     window.modal('Review workspace import',source,`<p>This replaces the shared financial records for every user. The current revision will be retained in Previous revisions.</p><div class="detail-top"><div><small>Invoices</small><b>${next.invoices.length}</b></div><div><small>Advice entries</small><b>${next.advice.length}</b></div><div><small>Bank receipts</small><b>${next.bank.length}</b></div><div><small>Customer terms</small><b>${next.customerTerms?.length || 0}</b></div></div><p id="restoreError" class="form-error" role="alert"></p>`,`<button class="btn" data-close-modal>Cancel</button><button class="btn danger" id="confirmRestore">Replace shared records</button>`);

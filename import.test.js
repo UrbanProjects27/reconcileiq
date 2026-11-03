@@ -90,6 +90,7 @@ test('sales return labels from uploaded workbooks normalize without accepting un
     input.rows[0][1]=label;const result=prepareImport(input,current);assert.equal(result.canImport,true,label);assert.equal(result.state.returns[0].type,'Qty return');assert.equal(result.state.returns[0].amount,31920);
   }
   input.rows[0][1]='unknown';assert.match(prepareImport(input,current).errors[0].message,/Unrecognized return type: unknown/);
+  for(const label of ['constructor','__proto__','toString']){input.rows[0][1]=label;assert.equal(prepareImport(input,current).canImport,false,label);}
 });
 test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;

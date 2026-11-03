@@ -197,10 +197,14 @@ async function createApplication(options = {}) {
         if (route === '/api/import') admin();
         let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
         if(route==='/api/import')input=await bulk.project(session,input);
-        if (!Number.isInteger(input.revision) || input.revision < 0) fail(400,'A workspace revision is required.');
+        if (!Number.isSafeInteger(input.revision) || input.revision < 0 || input.revision>2147483647) fail(400,'A valid workspace revision is required.');
         let next = route === '/api/import' ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
           const [previous] = await query('SELECT revision,data FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
+          const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
+          const allowed=route==='/api/state'?['admin','editor']:['admin'];
+          if(!actor?.active || actor.must_change || !allowed.includes(actor.role))fail(403,'Your access changed. Sign in again before saving.');
+          if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
           let imported;
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
@@ -208,9 +212,12 @@ async function createApplication(options = {}) {
             if(!imported.canImport)fail(400,imported.errors[0]?.message || 'There are no new or changed records to import.');
             next=imported.state;
           }
-          validateBankCustomers(next,decodeState(previous.data));
-          validateAdviceFields(next,decodeState(previous.data));
-          validateReturnFields(next,decodeState(previous.data));
+          // Historical backups may predate newly required fields. Their schema
+          // is still validated; new-record rules apply to regular writes/imports.
+          if(route!=='/api/restore'){
+            const before=decodeState(previous.data);
+            validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);
+          }
           const encoded=encodeState(next);
           const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[encoded,input.revision]);
           if (!updated.length) fail(409,'Another user saved changes. Your input is still open; review the latest data and save again.');
@@ -227,6 +234,9 @@ async function createApplication(options = {}) {
       if (route === '/api/users' && method === 'POST') {
         admin(); const input = await body(request);
         const user = await db.transaction(async query=>{
+          await query('SELECT id FROM workspace WHERE id=1'+(db.kind==='postgres'?' FOR UPDATE':''));
+          const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
+          if(!actor?.active || actor.must_change || actor.role!=='admin')fail(403,'Administrator access has changed. Sign in again.');
           const created = await createUser({query},{...input,mustChange:true});
           await audit(query,session,'user.created',{userId:created.id,email:created.email,role:created.role}); return created;
         });
@@ -274,7 +284,8 @@ async function createApplication(options = {}) {
       }
       if (route === '/api/snapshots' && method === 'GET') { admin(); return json(response,200,{snapshots:await db.query('SELECT revision,created_at FROM workspace_snapshots ORDER BY revision DESC LIMIT 100')}); }
       if (/^\/api\/snapshots\/\d+$/.test(route) && method === 'GET') {
-        admin(); const [row] = await db.query('SELECT revision,data FROM workspace_snapshots WHERE revision=$1',[Number(route.split('/').pop())]);
+        admin();const revision=Number(route.split('/').pop());if(!Number.isSafeInteger(revision) || revision>2147483647)fail(400,'Invalid snapshot revision.');
+        const [row] = await db.query('SELECT revision,data FROM workspace_snapshots WHERE revision=$1',[revision]);
         if (!row) fail(404,'Snapshot not found.');
         return json(response,200,{revision:row.revision,state:decodeState(row.data)});
       }
