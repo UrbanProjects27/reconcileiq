@@ -90,6 +90,33 @@ test('customer and dashboard categories exclude settlements and excess payments'
   assert.equal(app.run('totals().due'), 300);
 });
 
+test('dashboard brand filter scopes balances, adjustments, payment charts, customers and exports',()=>{
+  const app=workspace();
+  app.run(`state.invoices=[
+    {id:'A-1',customer:'Shared Buyer',brandName:'Brand A',date:today,amount:1000},
+    {id:'A-2',customer:'Shared Buyer',brandName:' brand a ',date:'2020-01-01',amount:200},
+    {id:'B-1',customer:'Other Buyer',brandName:'Brand B',date:today,amount:500},
+    {id:'UNBRANDED',customer:'Unbranded Buyer',date:today,amount:75}
+  ];state.customerTerms=[{customer:'Shared Buyer',creditDays:45},{customer:'Other Buyer',creditDays:45},{customer:'Unbranded Buyer',creditDays:45}];
+  state.advice=[{id:'P-A',invoice:'A-1',type:'Payment',amount:100,date:today},{id:'T-A',invoice:'A-2',type:'TDS',amount:20,date:today},{id:'P-B',invoice:'B-1',type:'Payment',amount:200,date:today},{id:'P-U',invoice:'UNBRANDED',type:'Payment',amount:15,date:today},{id:'UNALLOCATED',type:'Payment',amount:9999,date:today}];
+  state.returns=[{invoice:'A-1',amount:50}];state.priceReturns=[{invoice:'A-2',amount:10}];dashboardBrand='brand:brand a';`);
+  assert.equal(app.run('dashboardData().invoices.length'),2);assert.equal(app.run("dashboardData().options.filter(x=>x.value==='brand:brand a').length"),1);
+  assert.equal(app.run('totals(dashboardData().invoices).invoice'),1200);assert.equal(app.run('totals(dashboardData().invoices).pending'),1020);
+  assert.equal(app.run('totals(dashboardData().invoices).due'),850);assert.equal(app.run('totals(dashboardData().invoices).overdue'),170);
+  assert.equal(app.run('sum(dashboardData().payments,x=>x.amount)'),100);assert.equal(app.run('customerRows(dashboardData().invoices).length'),1);
+  assert.equal(app.run('customerRows(dashboardData().invoices)[0].pending'),1020);
+  const html=app.run('renderDashboard()');assert.ok(html.includes('Filter dashboard by brand'));assert.ok(html.includes('2 of 4 invoices'));assert.ok(!html.includes('Other Buyer'));assert.ok(html.includes(`class="bar payment" title="${app.run('fMoney(100)')}"`));
+  app.run("showToast=()=>{};action('export-dashboard',{})");assert.equal(app.context.exportedCSV.split('\r\n').length,3);assert.ok(app.context.exportedCSV.includes('A-1'));assert.ok(!app.context.exportedCSV.includes('B-1'));
+  app.run("dashboardBrand='unassigned'");assert.equal(app.run('dashboardData().invoices[0].id'),'UNBRANDED');assert.equal(app.run('totals(dashboardData().invoices).pending'),60);assert.equal(app.run('sum(dashboardData().payments,x=>x.amount)'),15);
+  app.run("dashboardBrand='all'");assert.equal(app.run('totals(dashboardData().invoices).pending'),1380);assert.equal(app.run('sum(dashboardData().payments,x=>x.amount)'),315);
+  assert.equal(app.run('state.invoices.length'),4);
+});
+
+test('dashboard handles empty data and brand removal without leaving a stale selection',()=>{
+  const app=workspace();app.run("state.invoices=[];state.advice=[];state.returns=[];state.priceReturns=[];dashboardBrand='brand:missing';");
+  assert.equal(app.run('dashboardData().invoices.length'),0);assert.equal(app.run('dashboardBrand'),'all');assert.ok(app.run('renderDashboard()').includes('0 of 0 invoices'));
+});
+
 test('customer credit form validates and saves terms across invoices', async () => {
   const app = workspace();
   app.run('showToast=()=>{};openCustomerTerms()');
