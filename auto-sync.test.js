@@ -43,7 +43,9 @@ for(const engine of ['sqlite','postgres']){
     await f.db.query('UPDATE app_users SET role=$1 WHERE id=$2',['viewer',f.user.id]);f.change(header+'\n'+row('SYNC-3'),'v5');await f.run();assert.equal((await f.state()).bank.length,2);assert.match((await f.service.list()).runs[0].error,/no longer has access/);
   });
   test(`sync queue leases, pause and version checks prevent duplicate or cancelled commits [${engine}]`,async t=>{
-    const f=await fixture(t,engine);await f.service.dispatch('http://localhost');await f.due();await f.service.dispatch('http://localhost');assert.equal(f.queued.length,1);
+    const f=await fixture(t,engine);await f.service.dispatch('http://localhost');
+    assert.equal(Date.parse((await f.db.query('SELECT next_run_at FROM sync_sources'))[0].next_run_at)%900000,0);
+    await f.due();await f.service.dispatch('http://localhost');assert.equal(f.queued.length,1);
     await f.service.control(f.user,'source-test','pause','http://localhost');await f.service.run(f.queued[0]);assert.equal((await f.state()).bank.length,0);
     await f.db.query('UPDATE sync_sources SET lease_until=$1 WHERE id=$2',['','source-test']);await f.service.control(f.user,'source-test','resume','http://localhost');await f.service.run(f.queued.at(-1));await f.service.run(f.queued.at(-1));assert.equal((await f.state()).bank.length,1);
     assert.equal((await f.db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,1);
