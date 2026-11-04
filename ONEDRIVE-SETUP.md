@@ -147,3 +147,10 @@ No additional Microsoft permissions or paid service are required for this path.
 - https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app
 - https://learn.microsoft.com/en-us/entra/msal/javascript/node/acquire-token-requests
 - https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?view=graph-rest-1.0
+
+
+## Automatic synchronization
+
+Saved file mappings are checked every 15 minutes on the production site, even when browsers are closed. Browse a workbook, map a supported register and choose **Enable automatic sync**. Manage mappings and inspect results under **Microsoft OneDrive → Automatic sync**. New rows are added; duplicates are skipped. Changed existing rows are shown for administrator review and are never overwritten automatically. Removing a row from Excel does not delete it from the app. Changes to worksheet headers require remapping. Unknown-invoice returns are retried until their invoices exist. Payment advice remains a manual import because its source format has no stable document identifier. Reconnecting OneDrive is necessary if Microsoft revokes consent or the client secret expires.
+
+The sync_sources and sync_runs tables stay in the private reconcileiq schema with RLS and no public grants. The sync-schedule function runs on */15 * * * * and only dispatches signed sync-worker background jobs. Jobs use leases, mapping versions and the latest locked workspace to prevent duplicate or stale writes. Pausing a mapping invalidates in-flight writes. No new Microsoft permissions are required.

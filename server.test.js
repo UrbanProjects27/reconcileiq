@@ -41,6 +41,15 @@ async function fixture(t, engine) {
   return {db,admin,request,login,base};
 }
 
+integrationTest('automatic sync history and controls require administrator access and CSRF',async(t,engine)=>{
+  const {request,login,db,admin:owner}=await fixture(t,engine);const admin=await login();
+  assert.equal((await request('/api/sync-sources')).status,401);
+  assert.equal((await request('/api/sync-sources','GET',undefined,admin)).status,200);
+  assert.equal((await request('/api/sync-sources','POST',{},admin,{'X-CSRF-Token':'wrong'})).status,403);
+  await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['editor',owner.id]);
+  assert.equal((await request('/api/sync-sources','GET',undefined,admin)).status,403);
+  assert.equal((await request('/api/sync-sources','POST',{},admin)).status,403);
+});
 integrationTest('bank customers are required on writes while unchanged legacy receipts remain usable',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();
   const state=emptyState();state.bank=[{ref:'OLD',date:'2026-11-01',amount:100,status:'unmatched'}];

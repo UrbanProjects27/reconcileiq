@@ -8,6 +8,7 @@ const { digest, publicUser, hashPassword, verifyPassword, createUser } = require
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
 const {definitions:importDefinitions,prepareImport} = require('./lib/import');
 const {createBulkImport}=require('./lib/bulk-import');
+const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
 const {requireAdminForRemovals,deleteRecord}=require('./lib/records');
@@ -65,6 +66,7 @@ async function createApplication(options = {}) {
   const dummyHash = await hashPassword(randomBytes(32).toString('hex'));
   const onedrive = createOneDrive({db,audit,...options.onedrive});
   const bulk=createBulkImport({db,onedrive,...options.bulk});
+  const autoSync=createAutoSync({db,onedrive,bulk,audit,...options.autoSync});
   const passwordReset=createPasswordReset({db,audit});
   if (process.env.ADMIN_EMAIL && process.env.ADMIN_PASSWORD && !options.skipBootstrap) {
     const [count] = await db.query('SELECT COUNT(*) AS count FROM app_users');
@@ -164,6 +166,14 @@ async function createApplication(options = {}) {
       if(resetAction && method==='POST'){
         admin();const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;
         return json(response,200,resetAction[2]==='reset-link'?await passwordReset.issue(session,resetAction[1],origin):await passwordReset.temporary(session,resetAction[1],input.password));
+      }
+      if(route==='/api/sync-sources'){
+        admin();if(method==='GET')return json(response,200,await autoSync.list());
+        if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await autoSync.save(session,input,origin));}
+      }
+      if(/^\/api\/sync-sources\/[a-f0-9-]{36}$/i.test(route) && method==='POST'){
+        admin();const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;
+        return json(response,202,await autoSync.control(session,route.split('/').pop(),input.action,origin));
       }
       if(route==='/api/import-jobs'){
         admin();if(method==='GET')return json(response,200,await bulk.list(session));

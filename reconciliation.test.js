@@ -33,6 +33,12 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('automatic sync controls display review details safely and expose pause and run actions only to admins',async()=>{
+  const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
+  app.run(`modal=(...args)=>{window.syncModal=args;return {querySelector:selector=>document.getElementById(selector.slice(1)),querySelectorAll:()=>[]};};window.workspaceAPI=async()=>({sources:[{id:'SOURCE',enabled:1,status:'review',last_success:'2026-11-04T05:00:00Z',config:{name:'bank.xlsx',sheetName:'bank',type:'bank'}}],runs:[{id:'RUN',source_id:'SOURCE',status:'review',created_at:'2026-11-04T05:00:00Z',summary:{counts:{added:1,review:1},reviews:[{row:2,identifier:'<unsafe>',changes:[{field:'Amount',existing:100,source:200}]}]}}]});`);
+  await app.run('openSyncSources()');assert.ok(app.run('window.syncModal[2]').includes('data-sync-action="pause"'));assert.ok(app.run('window.syncModal[2]').includes('data-sync-action="run"'));assert.ok(app.run('window.syncModal[2]').includes('&lt;unsafe&gt;'));assert.ok(!app.run('window.syncModal[2]').includes('<unsafe>'));
+  app.run(`sharedSession.user.role='editor';window.workspaceAPI=()=>{throw Error('Must not fetch sync controls')};showToast=()=>{};`);await app.run('openSyncSources()');
+});
 test('bank file mapping recognizes transaction ID without confusing narration or customer',()=>{
   const app=workspace();const {definitions,prepareImport}=require('./lib/import');
   app.context.bankFields=definitions.bank.fields;

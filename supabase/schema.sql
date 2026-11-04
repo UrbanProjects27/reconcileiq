@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_connections (id INTEGER PRIMARY 
 CREATE TABLE IF NOT EXISTS reconcileiq.onedrive_oauth (state_hash TEXT PRIMARY KEY, data TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.import_jobs (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES reconcileiq.app_users(id), file_id TEXT NOT NULL, status TEXT NOT NULL, info TEXT NOT NULL, error TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.import_chunks (job_id TEXT NOT NULL REFERENCES reconcileiq.import_jobs(id) ON DELETE CASCADE, sheet_key TEXT NOT NULL, chunk_index INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(job_id,sheet_key,chunk_index));
+CREATE TABLE IF NOT EXISTS reconcileiq.sync_sources (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES reconcileiq.app_users(id), file_id TEXT NOT NULL, config TEXT NOT NULL, version TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_tag TEXT NOT NULL DEFAULT '', last_success TEXT NOT NULL DEFAULT '', next_run_at TEXT NOT NULL, lease_until TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending');
+CREATE TABLE IF NOT EXISTS reconcileiq.sync_runs (id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES reconcileiq.sync_sources(id) ON DELETE CASCADE, source_version TEXT NOT NULL, status TEXT NOT NULL, summary TEXT NOT NULL, error TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sync_runs_created ON reconcileiq.sync_runs(created_at);
 CREATE TABLE IF NOT EXISTS reconcileiq.password_reset_requests (id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES reconcileiq.app_users(id), requested_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.password_reset_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES reconcileiq.app_users(id), created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_expiry ON reconcileiq.app_sessions(expires_at);
@@ -35,6 +38,8 @@ ALTER TABLE reconcileiq.onedrive_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.onedrive_oauth ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.import_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.import_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.sync_sources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.sync_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.password_reset_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.password_reset_tokens ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA reconcileiq FROM PUBLIC;
