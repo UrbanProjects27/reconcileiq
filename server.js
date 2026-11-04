@@ -12,6 +12,7 @@ const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
 const {requireAdminForRemovals,deleteRecord}=require('./lib/records');
+const customerAccess=require('./lib/customer-access');
 const {gzipSync,gunzipSync}=require('node:zlib');
 
 const staticFiles = new Map([
@@ -178,13 +179,14 @@ async function createApplication(options = {}) {
         return json(response,202,await autoSync.control(session,route.split('/').pop(),input.action,origin));
       }
       if(route==='/api/import-jobs'){
-        importer();if(method==='GET')return json(response,200,await bulk.list(session));
+        importer();customerAccess.requireSharedFileAccess(session);if(method==='GET')return json(response,200,await bulk.list(session));
         if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await bulk.start(session,input.fileId,origin));}
       }
       if(/^\/api\/import-jobs\/[a-f0-9-]{36}$/i.test(route)){
-        importer();const id=route.split('/').pop();if(method==='GET')return json(response,200,await bulk.get(session,id));if(method==='DELETE')return json(response,200,await bulk.cancel(session,id));
+        importer();customerAccess.requireSharedFileAccess(session);const id=route.split('/').pop();if(method==='GET')return json(response,200,await bulk.get(session,id));if(method==='DELETE')return json(response,200,await bulk.cancel(session,id));
       }
       if (route.startsWith('/api/onedrive/')) {
+        customerAccess.requireSharedFileAccess(session);
         if(method==='GET' && ['/api/onedrive/files','/api/onedrive/workbook'].includes(route))importer();else admin();
         if (route === '/api/onedrive/status' && method === 'GET') return json(response,200,await onedrive.status());
         if (route === '/api/onedrive/connect' && method === 'POST') {
@@ -198,10 +200,16 @@ async function createApplication(options = {}) {
         if (route === '/api/onedrive/workbook' && method === 'GET') return json(response,200,await onedrive.workbook(url.searchParams.get('id') || ''));
         fail(404,'Not found.');
       }
-      if (route === '/api/state' && method === 'GET') return json(response,200,await readWorkspace(db));
+      if (route === '/api/state' && method === 'GET') {const current=await readWorkspace(db);return json(response,200,{revision:current.revision,state:customerAccess.filterState(current.state,session)});}
+      if(route==='/api/import/file' && method==='POST'){
+        importer();const input=await body(request);if(typeof input.name!=='string' || !/\.csv$/i.test(input.name) || typeof input.data!=='string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(input.data))fail(400,'Choose a UTF-8 CSV file.');
+        const bytes=Buffer.from(input.data,'base64');if(bytes.length>2*1024*1024)fail(400,'Use a CSV file up to 2 MB. Split larger files before importing.');
+        return json(response,200,await require('./lib/workbook').parseWorkbook('upload.csv',bytes));
+      }
       if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:session.role==='admin'?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes}});}
       if (route === '/api/import/preview' && method === 'POST') {
-        importer();const raw=await body(request);importAccess(session.role,raw.type);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
+        importer();const raw=await body(request);importAccess(session.role,raw.type);if(raw.jobId)customerAccess.requireSharedFileAccess(session);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,customerAccess.filterState(current.state,session));
+        if(unused)customerAccess.assertImportScope(unused,session,current.state);
         if(unused)encodeState(unused);
         return json(response,200,{...preview,revision:current.revision});
       }
@@ -211,28 +219,24 @@ async function createApplication(options = {}) {
         if (route === '/api/import') importer();
         if (route === '/api/records/delete') admin();
         let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
-        if(route==='/api/import'){importAccess(session.role,input.type);input=await bulk.project(session,input);}
+        if(route==='/api/import'){importAccess(session.role,input.type);if(input.jobId)customerAccess.requireSharedFileAccess(session);input=await bulk.project(session,input);}
         if (!Number.isSafeInteger(input.revision) || input.revision < 0 || input.revision>2147483647) fail(400,'A valid workspace revision is required.');
         let next = ['/api/import','/api/records/delete'].includes(route) ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
           const [previous] = await query('SELECT revision,data FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
-          const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
+          const [actor]=await query('SELECT u.role,u.active,u.must_change,u.buyer_group_ids FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
           const allowed=['/api/state','/api/import'].includes(route)?['admin','editor']:['admin'];
           if(!actor?.active || actor.must_change || !allowed.includes(actor.role))fail(403,'Your access changed. Sign in again before saving.');
           if(route==='/api/import')importAccess(actor.role,input.type);
           if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
           let imported,deleted;const before=decodeState(previous.data);
-          if(route==='/api/state' && input.state.buyerGroups===undefined)next.buyerGroups=before.buyerGroups || [];
-          if(route==='/api/state' && actor.role!=='admin'){
-            const groupIds=new Set((next.buyerGroups || []).map(group=>group.id));
-            if((before.buyerGroups || []).some(group=>!groupIds.has(group.id)))fail(403,'Only administrators can delete buyer groups.');
-          }
+          if(route==='/api/state')next=customerAccess.mergeState(before,input.state,actor);
           if(route==='/api/records/delete'){const result=deleteRecord(before,input);next=result.state;deleted=result.deleted;}
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
-            imported=prepareImport(input,decodeState(previous.data));
+            imported=prepareImport(input,customerAccess.filterState(before,actor));
             if(!imported.canImport)fail(400,imported.errors[0]?.message || 'There are no new or changed records to import.');
-            next=imported.state;
+            customerAccess.assertImportScope(imported.state,actor,before);next=customerAccess.mergeState(before,imported.state,actor);
           }
           // Historical backups may predate newly required fields. Their schema
           // is still validated; new-record rules apply to regular writes/imports.
@@ -244,11 +248,12 @@ async function createApplication(options = {}) {
           const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[encoded,input.revision]);
           if (!updated.length) fail(409,'Another user saved changes. Your input is still open; review the latest data and save again.');
           const revision = updated[0].revision;
+          if(JSON.stringify(before.buyerGroups || [])!==JSON.stringify(next.buyerGroups || []))await query("DELETE FROM app_sessions WHERE user_id IN (SELECT id FROM app_users WHERE role <> $1 AND buyer_group_ids <> $2)",['admin','null']);
           await query('INSERT INTO workspace_snapshots(revision,data,created_at) VALUES($1,$2,$3) ON CONFLICT(revision) DO NOTHING',[previous.revision,previous.data,new Date().toISOString()]);
           await query('DELETE FROM workspace_snapshots WHERE revision < $1',[revision-(encoded.startsWith('gzip:')?20:100)]);
           if(imported)await bulk.imported(query,session,input.jobId);
           await audit(query,session,deleted?'record.deleted':route === '/api/import'?'workspace.imported':route === '/api/restore' ? 'workspace.restored' : 'workspace.saved',{revision,changes:changeSummary(before,next),...(imported?{type:input.type,counts:imported.counts}:{}),...(deleted?{deleted}:{})});
-          return {revision,state:next,...(deleted?{deleted}:{})};
+          return {revision,state:customerAccess.filterState(next,actor),...(deleted?{deleted}:{})};
         });
         return json(response,200,result);
       }
@@ -259,8 +264,9 @@ async function createApplication(options = {}) {
           await query('SELECT id FROM workspace WHERE id=1'+(db.kind==='postgres'?' FOR UPDATE':''));
           const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
           if(!actor?.active || actor.must_change || actor.role!=='admin')fail(403,'Administrator access has changed. Sign in again.');
-          const created = await createUser({query},{...input,mustChange:true});
-          await audit(query,session,'user.created',{userId:created.id,email:created.email,role:created.role}); return created;
+          const [workspace]=await query('SELECT data FROM workspace WHERE id=1');const buyerGroupIds=customerAccess.validateBuyerGroupIds(input.buyerGroupIds===undefined?null:input.buyerGroupIds,decodeState(workspace.data),input.role || 'viewer');
+          const created = await createUser({query},{...input,buyerGroupIds,mustChange:true});
+          await audit(query,session,'user.created',{userId:created.id,email:created.email,role:created.role,buyerGroupIds:created.buyerGroupIds}); return created;
         });
         return json(response,201,{user});
       }
@@ -281,12 +287,15 @@ async function createApplication(options = {}) {
           if (!actor?.active || actor.role !== 'admin' || actor.must_change) fail(403,'Administrator access has changed. Sign in again.');
           const [target] = await query('SELECT * FROM app_users WHERE id=$1',[id]);
           const nextRole=input.role===undefined?target.role:role,nextActive=input.active===undefined?!!target.active:active;
+          const [workspace]=await query('SELECT data FROM workspace WHERE id=1');
+          const buyerGroupIds=input.buyerGroupIds===undefined?(nextRole==='admin'?null:customerAccess.buyerGroupIds(target)):customerAccess.validateBuyerGroupIds(input.buyerGroupIds,decodeState(workspace.data),nextRole);
+          await query('UPDATE app_users SET buyer_group_ids=$1 WHERE id=$2',[JSON.stringify(buyerGroupIds),id]);
           const [admins] = await query("SELECT COUNT(*) AS count FROM app_users WHERE role='admin' AND active=1");
           if (target.active && target.role === 'admin' && (!nextActive || nextRole !== 'admin') && Number(admins.count) <= 1) fail(409,'At least one active administrator is required.');
           await query('UPDATE app_users SET role=$1,active=$2,password_hash=$3,must_change=$4 WHERE id=$5',[nextRole,nextActive?1:0,hash || target.password_hash,hash ? 1 : target.must_change,id]);
           await query('DELETE FROM app_sessions WHERE user_id=$1',[id]);
           await revokePasswordResets(query,id,!!hash || !nextActive);
-          await audit(query,session,'user.updated',{userId:id,role:nextRole,active:nextActive,passwordReset:!!hash});
+          await audit(query,session,'user.updated',{userId:id,role:nextRole,active:nextActive,passwordReset:!!hash,buyerGroupIds});
         });
         return json(response,200,{ok:true});
       }

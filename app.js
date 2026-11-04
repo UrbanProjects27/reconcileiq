@@ -162,10 +162,10 @@ function normalizeCustomerScope(){
 function customerScopeMarkup(){
   if(['settings','sync'].includes(currentView))return '';
   const customers=knownCustomers().filter(([,name])=>matchesBuyerScope({customer:name}));
-  return `<section class="panel customer-scope"><div class="filter-bar"><label>Buyer group<select class="filter-select" id="scopeBuyer" aria-label="Filter by buyer group"><option value="all">All buyer groups</option><option value="ungrouped" ${customerScope.buyer==='ungrouped'?'selected':''}>Customers without a group</option>${(state.buyerGroups || []).map(group=>`<option value="buyer:${esc(group.id)}" ${customerScope.buyer==='buyer:'+group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label><label>Customer<select class="filter-select" id="scopeCustomer" aria-label="Filter by customer"><option value="all">All customers</option>${customers.map(([key,name])=>`<option value="customer:${esc(key)}" ${customerScope.customer==='customer:'+key?'selected':''}>${esc(name)}</option>`).join('')}</select></label><button class="btn" id="clearCustomerScope">Clear buyer / customer</button>${['admin','editor'].includes(sharedSession?.user.role)?'<button class="btn" data-action="buyer-groups">Manage buyer groups</button>':''}</div></section>`;
+  return `<section class="panel customer-scope"><div class="filter-bar"><label>Buyer group<select class="filter-select" id="scopeBuyer" aria-label="Filter by buyer group"><option value="all">All buyer groups</option><option value="ungrouped" ${customerScope.buyer==='ungrouped'?'selected':''}>Customers without a group</option>${(state.buyerGroups || []).map(group=>`<option value="buyer:${esc(group.id)}" ${customerScope.buyer==='buyer:'+group.id?'selected':''}>${esc(group.name)}</option>`).join('')}</select></label><label>Customer<select class="filter-select" id="scopeCustomer" aria-label="Filter by customer"><option value="all">All customers</option>${customers.map(([key,name])=>`<option value="customer:${esc(key)}" ${customerScope.customer==='customer:'+key?'selected':''}>${esc(name)}</option>`).join('')}</select></label><button class="btn" id="clearCustomerScope">Clear buyer / customer</button>${sharedSession?.user.role==='admin'?'<button class="btn" data-action="buyer-groups">Manage buyer groups</button>':''}</div></section>`;
 }
 function openBuyerGroups(){
-  if(!['admin','editor'].includes(sharedSession?.user.role))return showToast('Administrator or editor access required.');
+  if(sharedSession?.user.role!=='admin')return showToast('Administrator access required.');
   const groups=state.buyerGroups || [],canDelete=sharedSession.user.role==='admin';
   const layer=modal('Buyer groups','Map multiple customers to one buyer group.',`<div class="table-wrap"><table><thead><tr><th>Buyer group</th><th>Customers</th><th>Actions</th></tr></thead><tbody>${groups.map(group=>`<tr><td><b>${esc(group.name)}</b></td><td>${group.customers.map(esc).join(', ') || 'No customers mapped'}</td><td><button class="btn small" data-edit-buyer="${esc(group.id)}">Edit</button>${canDelete?` <button class="btn small" data-delete-buyer="${esc(group.id)}">Delete</button>`:''}</td></tr>`).join('') || '<tr><td colspan="3">No buyer groups yet. Add a group and select its customers.</td></tr>'}</tbody></table></div>`,`<button class="btn" data-close-modal>Close</button><button class="btn primary" id="newBuyerGroup">Add buyer group</button>`);
   layer.querySelector('#newBuyerGroup').onclick=()=>openBuyerGroupForm();
@@ -173,7 +173,7 @@ function openBuyerGroups(){
   layer.querySelectorAll('[data-delete-buyer]').forEach(button=>button.onclick=()=>openDeleteBuyerGroup(button.dataset.deleteBuyer));
 }
 function openBuyerGroupForm(id){
-  if(!['admin','editor'].includes(sharedSession?.user.role))return;
+  if(sharedSession?.user.role!=='admin')return;
   const group=(state.buyerGroups || []).find(g=>g.id===id);if(id&&!group)return showToast('This group no longer exists. Refresh and try again.');
   const selected=new Set((group?.customers || []).map(customerKey));
   const layer=modal(group?'Edit buyer group':'Add buyer group','Choose all customers that belong to this buyer.',`<label class="account-form">Buyer group name<input id="buyerGroupName" maxlength="200" value="${esc(group?.name || '')}" required /></label><label class="account-form">Find customer<input id="buyerCustomerSearch" type="search" placeholder="Search customers" /></label><div class="buyer-customer-list">${knownCustomers().map(([key,name])=>`<label data-buyer-customer-name="${esc(key)}"><input type="checkbox" data-buyer-customer="${esc(name)}" ${selected.has(key)?'checked':''} /> ${esc(name)}</label>`).join('') || '<p>Add or import customers first.</p>'}</div><p id="buyerGroupError" class="form-error" role="alert"></p>`,`<button class="btn" id="buyerGroupBack">Back</button><button class="btn primary" id="saveBuyerGroup">Save buyer group</button>`);
@@ -464,6 +464,18 @@ const registerImportTemplates={
   advice:['Customer name','Invoice number','Transaction type','Amount','Transaction description','UTR'],
   debitNotes:['Debit note number','Customer name','Date','Amount','Invoice number','Type'],
 };
+function openScopedCsvImport(type){
+  const layer=modal(type==='advice'?'Import payment advice':'Import debit notes','Import records for your assigned buyer groups.',`<p>Choose a UTF-8 CSV file from your computer, up to 2 MB and 5,000 data rows. Save an Excel worksheet as CSV first. Every row must belong to your assigned customers.</p><label class="account-form">CSV file<input id="scopedImportFile" type="file" accept=".csv,text/csv" /></label><p id="scopedImportError" class="form-error" role="alert"></p>`,`<button class="btn" id="scopedImportTemplate">Download template</button><button class="btn" data-close-modal>Cancel</button><button class="btn primary" id="readScopedCsv">Read file</button>`);
+  layer.querySelector('#scopedImportTemplate').onclick=()=>downloadRegisterImportTemplate(type);
+  layer.querySelector('#readScopedCsv').onclick=async()=>{
+    const button=layer.querySelector('#readScopedCsv');if(button.disabled)return;button.disabled=true;
+    try{const file=layer.querySelector('#scopedImportFile').files?.[0];if(!file || !/\.csv$/i.test(file.name))throw Error('Choose a UTF-8 CSV file.');if(file.size>2*1024*1024)throw Error('Use a CSV file up to 2 MB.');
+      const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let offset=0;offset<bytes.length;offset+=8192)binary+=String.fromCharCode(...bytes.subarray(offset,offset+8192));
+      const [book,{definitions}]=await Promise.all([window.workspaceAPI('/api/import/file','POST',{name:'upload.csv',data:btoa(binary)}),window.workspaceAPI('/api/import/definitions')]);
+      openImportMapping(book,definitions,0,type);
+    }catch(error){layer.querySelector('#scopedImportError').textContent=error.message;button.disabled=false;}
+  };
+}
 function downloadRegisterImportTemplate(type){
   const headers=registerImportTemplates[type];if(!headers)return;
   const blob=new Blob([headers.map(csvEscape).join(',')+'\r\n'],{type:'text/csv;charset=utf-8;'});
@@ -473,6 +485,7 @@ function openRegisterBulkImport(type){
   if(!['admin','editor'].includes(sharedSession?.user.role))return showToast('Administrator or editor access is required to bulk import records.');
   if(!Object.hasOwn(registerImportTemplates,type))return;
   const advice=type==='advice';
+  if(sharedSession?.user.buyerGroupIds!==null && sharedSession?.user.buyerGroupIds!==undefined)return openScopedCsvImport(type);
   const layer=modal(advice?'Bulk import payment advice':'Bulk import debit notes','Import an Excel (.xlsx) or CSV file from OneDrive.',`<p>Download the CSV template, fill it in using Excel, and save it to your connected OneDrive. You can also use an existing file and map its columns.</p><p><strong>Required columns:</strong> ${advice?'Customer name, Invoice number, Transaction type, Amount, Transaction description and UTR.':'Debit note number, Customer name, Date and Amount. Invoice number and Type are optional.'}</p><p>${advice?'Use one row per invoice allocation. Repeat a UTR across multiple rows to allocate a receipt to several invoices for the same buyer. Types: Payment, TDS, PPV, PQV, CCOGS, TaxD and EPC. Import invoices and bank receipts first. Payment totals cannot exceed the available bank balance.':'Types: PPV, PQV, CCOGS, TAXD and EPC. Use YYYY-MM-DD dates or select your date format during mapping. Debit notes are retained for review; importing them does not deduct the amount again from invoice balances.'}</p><p>Files up to 100 MB and up to 200,000 rows per register are supported. Review the full-file validation results and confirm before saving. Identical records are skipped; invalid or conflicting records must be corrected.</p>`,`<button class="btn" id="downloadRegisterTemplate">Download template</button><button class="btn" id="resumeRegisterImport">Resume prepared file</button><button class="btn primary" id="chooseRegisterImport">Choose OneDrive file</button><button class="btn" data-close-modal>Cancel</button>`);
   layer.querySelector('#downloadRegisterTemplate').onclick=()=>downloadRegisterImportTemplate(type);
   layer.querySelector('#resumeRegisterImport').onclick=()=>openBulkImports(type).catch(error=>showToast(error.message));

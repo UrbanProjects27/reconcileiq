@@ -37,3 +37,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .buyer-customer-list{max-height:330px;overflow:auto;display:grid;gap:10px;margin-top:16px;padding:12px;border:1px solid #e3e8f0;border-radius:8px}
 .buyer-customer-list label{display:flex;align-items:center;gap:9px;font-size:12px}
 .buyer-customer-list input{width:auto}
+.account-form #teamBuyerGroups{max-height:250px;overflow:auto;display:grid;gap:8px}
+.account-form #teamBuyerGroups[hidden]{display:none}
+.account-form #teamBuyerGroups label{display:flex;flex-direction:row;align-items:center;gap:8px}
+.account-form #teamBuyerGroups input{width:auto;height:auto}

@@ -42,12 +42,12 @@ test('buyer groups combine multiple customers across views and exports without c
   app.run("customerScope={buyer:'ungrouped',customer:'all'}");assert.equal(app.run('dashboardData().invoices[0].id'),'C');
   app.run("customerScope={buyer:'buyer:G',customer:'all'};state.buyerGroups=[];normalizeCustomerScope()");assert.equal(app.run('customerScope.buyer'),'all');
 });
-test('buyer groups can be created with several customers and viewer changes are blocked',async()=>{
-  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});
+test('buyer groups can be created by admins with several customers and viewer changes are blocked',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'admin'}});
   const choices=[{checked:true,dataset:{buyerCustomer:'Alpha'}},{checked:true,dataset:{buyerCustomer:'Beta'}},{checked:false,dataset:{buyerCustomer:'Other'}}];
   app.context.choices=choices;app.run(`modal=(...args)=>{window.groupModal=args;return {querySelector:s=>document.getElementById(s.slice(1)),querySelectorAll:s=>s==='[data-buyer-customer]'?choices:[]};};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>({state:input.state,revision:2});openBuyerGroupForm();`);
   app.element('buyerGroupName').value='Buyer Group';await app.element('saveBuyerGroup').onclick();assert.equal(app.run('state.buyerGroups[0].customers.length'),2);assert.equal(app.run('workspaceRevision'),2);
-  assert.ok(!app.run('window.groupModal[2]').includes('data-delete-buyer='));
+  assert.ok(app.run('window.groupModal[2]').includes('data-delete-buyer='));
   app.run(`sharedSession.user.role='viewer';modal=()=>{throw Error('Viewer must not edit groups')};openBuyerGroups();`);
 });
 test('register bulk import templates map required fields and are available to administrators and editors',()=>{

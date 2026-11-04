@@ -74,13 +74,38 @@ integrationTest('editors can import advice and debit notes but cannot import oth
 integrationTest('buyer groups persist through old clients and imports, validate members and restrict group deletion to admins',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();const user=await createUser(db,{email:'group-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});const editor=await login(user.email);
   const state=emptyState();state.buyerGroups=[{id:'GROUP',name:'Group',customers:['Alpha','Beta']}];
-  const saved=await request('/api/state','PUT',{state,revision:0},editor);assert.equal(saved.status,200);assert.equal(saved.body.state.buyerGroups[0].customers.length,2);
+  const saved=await request('/api/state','PUT',{state,revision:0},admin);assert.equal(saved.status,200);assert.equal(saved.body.state.buyerGroups[0].customers.length,2);
   const legacy=structuredClone(saved.body.state);delete legacy.buyerGroups;
   assert.equal((await request('/api/state','PUT',{state:legacy,revision:1},editor)).body.state.buyerGroups.length,1);
   const removed=structuredClone(saved.body.state);removed.buyerGroups=[];assert.equal((await request('/api/state','PUT',{state:removed,revision:2},editor)).status,403);
   for(const customers of [['Alpha',' alpha '],[{customer:'Alpha'}],['<unsafe>']]){const invalid=structuredClone(saved.body.state);invalid.buyerGroups[0].customers=customers;assert.equal((await request('/api/state','PUT',{state:invalid,revision:2},editor)).status,400);}
   const imported=await request('/api/import','POST',{type:'invoices',rows:[['I','Alpha','2026-11-04',100]],mapping:{id:0,customer:1,date:2,amount:3},startRow:2,dateFormat:'iso',revision:2},admin);assert.equal(imported.status,200);assert.equal(imported.body.state.buyerGroups.length,1);
   const final=structuredClone(imported.body.state);final.buyerGroups=[];assert.equal((await request('/api/state','PUT',{state:final,revision:3},admin)).status,200);assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,4);
+});
+integrationTest('buyer-group assignments limit reads, writes and imports, preserve other customers and revoke stale sessions',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();const state=emptyState();
+  state.invoices=['Alpha','Beta','Other'].map((customer,i)=>({id:'I'+i,customer,date:'2026-11-01',amount:100*(i+1)}));state.bank=state.invoices.map(i=>({ref:'U'+i.id,customer:i.customer,date:'2026-11-02',amount:i.amount,status:'unmatched'}));
+  state.buyerGroups=[{id:'G1',name:'Buyer 1',customers:['Alpha','Beta']},{id:'G2',name:'Buyer 2',customers:['Other']}];state.logs=[{event:'Private other-customer activity',detail:'Other',time:'now',kind:'ok'}];
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const viewerUser=await createUser(db,{email:'scoped-viewer@example.com',name:'Scoped viewer',password,role:'viewer',mustChange:false,buyerGroupIds:['G2']});const scopedViewer=await login(viewerUser.email);
+  assert.equal((await request('/api/state','GET',undefined,scopedViewer)).body.state.invoices.length,1);assert.equal((await request('/api/state','PUT',{state,revision:1},scopedViewer)).status,403);
+  const user=await createUser(db,{email:'scoped-editor@example.com',name:'Scoped',password,role:'editor',mustChange:false,buyerGroupIds:['G1']});let scoped=await login(user.email);
+  let view=await request('/api/state','GET',undefined,scoped);assert.equal(view.body.state.invoices.length,2);assert.equal(view.body.state.bank.length,2);assert.equal(view.body.state.buyerGroups.length,1);assert.equal(view.body.state.logs.length,0);assert.ok(!JSON.stringify(view.body.state).includes('Other'));
+  view.body.state.invoices[0].amount=125;let saved=await request('/api/state','PUT',{state:view.body.state,revision:1},scoped);assert.equal(saved.status,200);assert.equal(saved.body.state.invoices.length,2);
+  const whole=await request('/api/state','GET',undefined,admin);assert.equal(whole.body.state.invoices.find(i=>i.customer==='Other').amount,300);
+  const forged=structuredClone(saved.body.state);forged.invoices.push({id:'FORGED',customer:'Other',date:'2026-11-01',amount:1});assert.equal((await request('/api/state','PUT',{state:forged,revision:2},scoped)).status,403);
+  const expanded=structuredClone(saved.body.state);expanded.buyerGroups[0].customers.push('Other');assert.equal((await request('/api/state','PUT',{state:expanded,revision:2},scoped)).status,403);
+  for(const route of ['/api/onedrive/files','/api/import-jobs','/api/backup','/api/users'])assert.equal((await request(route,'GET',undefined,scoped)).status,403);
+  const csv=Buffer.from('Customer name,Invoice number,Transaction type,Amount,Transaction description,UTR\nAlpha,I0,Payment,10,Receipt,UI0').toString('base64');assert.equal((await request('/api/import/file','POST',{name:'advice.csv',data:csv},scoped)).status,200);
+  const debit={type:'debitNotes',mapping:{id:0,customer:1,date:2,amount:3,type:4},rows:[['D','Other','2026-11-04',10,'EPC']],startRow:2,dateFormat:'iso'};
+  assert.equal((await request('/api/import/preview','POST',debit,scoped)).status,403);debit.rows[0][1]='Alpha';assert.equal((await request('/api/import/preview','POST',debit,scoped)).status,200);
+  const imported=await request('/api/import','POST',{...debit,revision:2},scoped);assert.equal(imported.status,200);assert.ok(!JSON.stringify(imported.body.state).includes('Other'));
+  assert.equal((await request(`/api/users/${user.id}`,'PATCH',{buyerGroupIds:['MISSING']},admin)).status,400);
+  assert.equal((await request(`/api/users/${user.id}`,'PATCH',{buyerGroupIds:['G1','G2']},admin)).status,200);assert.equal((await request('/api/state','GET',undefined,scoped)).status,401);
+  scoped=await login(user.email);assert.equal((await request('/api/state','GET',undefined,scoped)).body.state.invoices.length,3);
+  const updated=(await request('/api/state','GET',undefined,admin)).body;updated.state.buyerGroups[0].customers=['Alpha'];assert.equal((await request('/api/state','PUT',updated,admin)).status,200);assert.equal((await request('/api/state','GET',undefined,scoped)).status,401);
+  scoped=await login(user.email);assert.equal((await request('/api/state','GET',undefined,scoped)).body.state.invoices.length,2);
+  assert.equal((await request(`/api/users/${user.id}`,'PATCH',{buyerGroupIds:[]},admin)).status,200);scoped=await login(user.email);assert.equal((await request('/api/state','GET',undefined,scoped)).body.state.invoices.length,0);
 });
 integrationTest('bank customers are required on writes while unchanged legacy receipts remain usable',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();
