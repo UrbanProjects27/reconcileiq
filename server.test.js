@@ -41,20 +41,20 @@ async function fixture(t, engine) {
   return {db,admin,request,login,base};
 }
 
-integrationTest('automatic sync history and controls require administrator access and CSRF',async(t,engine)=>{
+integrationTest('automatic sync history and controls allow editors and require CSRF',async(t,engine)=>{
   const {request,login,db,admin:owner}=await fixture(t,engine);const admin=await login();
   assert.equal((await request('/api/sync-sources')).status,401);
   assert.equal((await request('/api/sync-sources','GET',undefined,admin)).status,200);
   assert.equal((await request('/api/sync-sources','POST',{},admin,{'X-CSRF-Token':'wrong'})).status,403);
   await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['editor',owner.id]);
-  assert.equal((await request('/api/sync-sources','GET',undefined,admin)).status,403);
-  assert.equal((await request('/api/sync-sources','POST',{},admin)).status,403);
+  assert.equal((await request('/api/sync-sources','GET',undefined,admin)).status,200);
+  assert.equal((await request('/api/sync-sources','POST',{},admin)).status,400);
 });
 integrationTest('editors can import advice and debit notes but cannot import other registers or manage connections or deletions',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const user=await createUser(db,{email:'import-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});const editor=await login(user.email);
   const state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:1000}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-02',amount:100,status:'unmatched'}];
   await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
-  const definitions=await request('/api/import/definitions','GET',undefined,editor);assert.equal(definitions.status,200);assert.deepEqual(Object.keys(definitions.body.definitions).sort(),['advice','debitNotes']);
+  const definitions=await request('/api/import/definitions','GET',undefined,editor);assert.equal(definitions.status,200);assert.ok(definitions.body.definitions.advice);assert.ok(definitions.body.definitions.debitNotes);
   const advice={type:'advice',rows:[['Buyer','I','Payment',50,'Receipt','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2,dateFormat:'iso'};
   const preview=await request('/api/import/preview','POST',advice,editor);assert.equal(preview.status,200);assert.equal(preview.body.canImport,true);
   assert.equal((await request('/api/import','POST',{...advice,revision:0},editor,{'X-CSRF-Token':'bad'})).status,403);
@@ -66,7 +66,7 @@ integrationTest('editors can import advice and debit notes but cannot import oth
     assert.equal((await request('/api/import','POST',{...debit,type,revision:2},editor)).status,403);
   }
   assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,200);
-  for(const route of ['/api/onedrive/connect','/api/onedrive/disconnect','/api/sync-sources','/api/records/delete'])assert.equal((await request(route,'POST',{},editor)).status,403);
+  for(const route of ['/api/onedrive/connect','/api/onedrive/disconnect','/api/records/delete'])assert.equal((await request(route,'POST',{},editor)).status,403);
   await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['viewer',user.id]);
   assert.equal((await request('/api/import/preview','POST',advice,editor)).status,403);assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,403);
   assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);

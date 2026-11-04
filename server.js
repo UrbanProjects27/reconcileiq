@@ -171,11 +171,11 @@ async function createApplication(options = {}) {
         return json(response,200,resetAction[2]==='reset-link'?await passwordReset.issue(session,resetAction[1],origin):await passwordReset.temporary(session,resetAction[1],input.password));
       }
       if(route==='/api/sync-sources'){
-        admin();if(method==='GET')return json(response,200,await autoSync.list());
+        importer();if(method==='GET')return json(response,200,await autoSync.list(session));
         if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await autoSync.save(session,input,origin));}
       }
       if(/^\/api\/sync-sources\/[a-f0-9-]{36}$/i.test(route) && method==='POST'){
-        admin();const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;
+        importer();const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;
         return json(response,202,await autoSync.control(session,route.split('/').pop(),input.action,origin));
       }
       if(route==='/api/import-jobs'){
@@ -206,7 +206,7 @@ async function createApplication(options = {}) {
         const bytes=Buffer.from(input.data,'base64');if(bytes.length>2*1024*1024)fail(400,'Use a CSV file up to 2 MB. Split larger files before importing.');
         return json(response,200,await require('./lib/workbook').parseWorkbook('upload.csv',bytes));
       }
-      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:session.role==='admin'?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes}});}
+      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:!customerAccess.restricted(session)?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes}});}
       if (route === '/api/import/preview' && method === 'POST') {
         importer();const raw=await body(request);importAccess(session.role,raw.type);if(raw.jobId)customerAccess.requireSharedFileAccess(session);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,customerAccess.filterState(current.state,session));
         if(unused)customerAccess.assertImportScope(unused,session,current.state);

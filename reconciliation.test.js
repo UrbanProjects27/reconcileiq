@@ -89,11 +89,12 @@ test('register type survives CSV loading, Excel background preparation and resum
   const resumed=workspace();resumed.run(`document.getElementById('bulkJobMarker').dataset.job='JOB';modal=()=>({classList:{contains:()=>false},querySelector:s=>document.getElementById(s.slice(1))});window.workspaceAPI=async route=>route==='/api/import/definitions'?{definitions:{}}:{status:'ready',file_id:'FILE',info:{name:'advice.xlsx',sheets:[]}};openImportMapping=(...args)=>{window.mappingArgs=args;};`);
   await resumed.run(`watchBulkImport('JOB','advice')`);assert.equal(resumed.run('window.mappingArgs[3]'),'advice');
 });
-test('automatic sync controls display review details safely and expose pause and run actions only to admins',async()=>{
+test('automatic sync controls display review details safely and exclude viewers',async()=>{
   const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
   app.run(`modal=(...args)=>{window.syncModal=args;return {querySelector:selector=>document.getElementById(selector.slice(1)),querySelectorAll:()=>[]};};window.workspaceAPI=async()=>({sources:[{id:'SOURCE',enabled:1,status:'review',last_success:'2026-11-04T05:00:00Z',config:{name:'bank.xlsx',sheetName:'bank',type:'bank'}}],runs:[{id:'RUN',source_id:'SOURCE',status:'review',created_at:'2026-11-04T05:00:00Z',summary:{counts:{added:1,review:1},reviews:[{row:2,identifier:'<unsafe>',changes:[{field:'Amount',existing:100,source:200}]}]}}]});`);
   await app.run('openSyncSources()');assert.ok(app.run('window.syncModal[2]').includes('data-sync-action="pause"'));assert.ok(app.run('window.syncModal[2]').includes('data-sync-action="run"'));assert.ok(app.run('window.syncModal[2]').includes('&lt;unsafe&gt;'));assert.ok(!app.run('window.syncModal[2]').includes('<unsafe>'));
-  app.run(`sharedSession.user.role='editor';window.workspaceAPI=()=>{throw Error('Must not fetch sync controls')};showToast=()=>{};`);await app.run('openSyncSources()');
+  app.run(`sharedSession.user.role='editor';sharedSession.user.buyerGroupIds=['G'];window.workspaceAPI=async()=>({scoped:true,sources:[],runs:[],templates:[{id:'APPROVED',name:'source.xlsx',sheetName:'bank',type:'bank'}]});`);await app.run('openSyncSources()');assert.ok(app.run('window.syncModal[2]').includes('data-approved-sync="APPROVED"'));assert.ok(app.run('renderSettings()').includes('data-action="auto-sync"'));assert.ok(!app.run('renderSettings()').includes('data-action="connect-onedrive"'));
+  app.run(`sharedSession.user.role='viewer';window.workspaceAPI=()=>{throw Error('Must not fetch sync controls')};showToast=()=>{};`);await app.run('openSyncSources()');
 });
 test('bank file mapping recognizes transaction ID without confusing narration or customer',()=>{
   const app=workspace();const {definitions,prepareImport}=require('./lib/import');
