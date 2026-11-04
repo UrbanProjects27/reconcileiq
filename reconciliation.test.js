@@ -33,6 +33,22 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('bank file mapping recognizes transaction ID without confusing narration or customer',()=>{
+  const app=workspace();const {definitions,prepareImport}=require('./lib/import');
+  app.context.bankFields=definitions.bank.fields;
+  const mapping=JSON.parse(app.run(`JSON.stringify(suggestImportColumns(bankFields,['Bank','Date','Narration','Transaction ID','Amount','Customer Name'],'bank'))`));
+  assert.deepEqual(mapping,{ref:3,date:1,amount:4,customer:5,narration:2,bankName:0});
+  const current={invoices:[],returns:[],priceReturns:[],advice:[],bank:[],debitNotes:[],logs:[],customerTerms:[]};
+  const preview=prepareImport({type:'bank',mapping,rows:[['ICICI','02-11-2026','NEFT transfer','MAPPING-TEST-REF',48019.54,'aripl']],startRow:2,dateFormat:'dmy'},current);
+  assert.equal(preview.canImport,true);assert.equal(preview.state.bank[0].ref,'MAPPING-TEST-REF');
+  assert.equal(preview.state.bank[0].date,'2026-11-02');assert.equal(preview.state.bank[0].amount,48019.54);
+  assert.equal(preview.state.bank[0].customer,'aripl');assert.equal(preview.state.bank[0].bankName,'ICICI');assert.equal(preview.state.bank[0].narration,'NEFT transfer');
+  for(const header of ['Transaction No','Transaction Number']){
+    app.context.referenceHeader=header;
+    assert.equal(app.run(`suggestImportColumns(bankFields,[referenceHeader],'bank').ref`),0);
+  }
+});
+
 test('late refresh responses cannot overwrite a newer save or another refresh',async()=>{
   const initial=workspace().run('clone(seed)');const app=workspace(undefined,{state:initial,revision:1,user:{role:'admin'}});
   let resolveRefresh;app.context.window.workspaceAPI=(route,method,payload)=>method==='PUT'?Promise.resolve({state:payload.state,revision:2}):new Promise(resolve=>{resolveRefresh=resolve;});
