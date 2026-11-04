@@ -33,6 +33,29 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('register bulk import templates map required fields and are available only to administrators',()=>{
+  const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
+  assert.ok(app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
+  const {definitions}=require('./lib/import');app.context.importDefinitions=definitions;
+  for(const type of ['advice','debitNotes']){
+    app.context.registerType=type;
+    const mapping=JSON.parse(app.run('JSON.stringify(suggestImportColumns(importDefinitions[registerType].fields,registerImportTemplates[registerType],registerType))'));
+    for(const field of definitions[type].fields.filter(f=>f.required))assert.equal(typeof mapping[field.key],'number',type+': '+field.key);
+    app.run('downloadRegisterImportTemplate(registerType)');assert.ok(app.context.exportedCSV.endsWith('\r\n'));assert.equal(app.context.exportedCSV.trim().split('\n').length,1);
+  }
+  app.run(`modal=(...args)=>{window.bulkModal=args;return {querySelector:s=>document.getElementById(s.slice(1))};};openRegisterBulkImport('advice');`);
+  assert.ok(app.run('window.bulkModal[2]').includes('Repeat a UTR'));assert.ok(app.run('window.bulkModal[2]').includes('EPC'));
+  app.run(`sharedSession.user.role='editor';modal=()=>{throw Error('Editor must not import')};showToast=()=>{};openRegisterBulkImport('advice');`);
+  assert.ok(!app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(!app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
+});
+test('register type survives CSV loading, Excel background preparation and resumed mapping',async()=>{
+  const app=workspace();app.run(`window.workspaceAPI=async route=>route==='/api/import/definitions'?{definitions:{}}:{name:'source.csv',sheets:[]};openImportMapping=(...args)=>{window.mappingArgs=args;};`);
+  await app.run(`openOneDriveImport('FILE','advice')`);assert.equal(app.run('window.mappingArgs[3]'),'advice');
+  app.run(`window.workspaceAPI=async route=>route==='/api/import/definitions'?{definitions:{}}:route==='/api/import-jobs'?{id:'JOB'}:{large:true};watchBulkImport=(...args)=>{window.watchArgs=args;};`);
+  await app.run(`openOneDriveImport('FILE','debitNotes')`);assert.equal(app.run('window.watchArgs[1]'),'debitNotes');
+  const resumed=workspace();resumed.run(`document.getElementById('bulkJobMarker').dataset.job='JOB';modal=()=>({classList:{contains:()=>false},querySelector:s=>document.getElementById(s.slice(1))});window.workspaceAPI=async route=>route==='/api/import/definitions'?{definitions:{}}:{status:'ready',file_id:'FILE',info:{name:'advice.xlsx',sheets:[]}};openImportMapping=(...args)=>{window.mappingArgs=args;};`);
+  await resumed.run(`watchBulkImport('JOB','advice')`);assert.equal(resumed.run('window.mappingArgs[3]'),'advice');
+});
 test('automatic sync controls display review details safely and expose pause and run actions only to admins',async()=>{
   const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
   app.run(`modal=(...args)=>{window.syncModal=args;return {querySelector:selector=>document.getElementById(selector.slice(1)),querySelectorAll:()=>[]};};window.workspaceAPI=async()=>({sources:[{id:'SOURCE',enabled:1,status:'review',last_success:'2026-11-04T05:00:00Z',config:{name:'bank.xlsx',sheetName:'bank',type:'bank'}}],runs:[{id:'RUN',source_id:'SOURCE',status:'review',created_at:'2026-11-04T05:00:00Z',summary:{counts:{added:1,review:1},reviews:[{row:2,identifier:'<unsafe>',changes:[{field:'Amount',existing:100,source:200}]}]}}]});`);
