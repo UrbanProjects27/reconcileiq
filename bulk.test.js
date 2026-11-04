@@ -55,11 +55,13 @@ for(const engine of ['sqlite','postgres'])test(`bulk staging is private, resumab
   const job=await service.start(user,'source-file','http://localhost');assert.equal(queued[0],job.id);assert.equal((await service.get(user,job.id)).status,'queued');
   await assert.rejects(()=>service.get({id:'another-user'},job.id),/unavailable/);
   await assert.rejects(()=>service.start(user,'source-file','http://localhost'),/Another bulk import/);
+  await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['editor',user.id]);
   await service.run(job.id);assert.equal((await service.get(user,job.id)).status,'ready');assert.equal((await service.get(user,job.id)).info.sheets[0].rowCount,3);
   const [workspace]=await db.query('SELECT revision,data FROM workspace WHERE id=1');assert.equal(workspace.revision,0);assert.equal(JSON.parse(workspace.data).invoices.length,0);
   const projected=await service.project(user,{jobId:job.id,sheetKey:'0',type:'invoices',mapping:{id:0,customer:1,date:2,amount:3},startRow:2,dateFormat:'iso'});assert.equal(projected.rows.length,2);assert.deepEqual(projected.sourceRows,[2,3]);assert.equal(prepareImport(projected,emptyState()).counts.added,2);
   await db.transaction(query=>service.imported(query,user,job.id));assert.equal((await service.get(user,job.id)).status,'imported');assert.equal((await db.query('SELECT * FROM import_chunks')).length,0);
   await assert.rejects(()=>service.project(user,{jobId:job.id}),/already imported/);
   const cancelled=await service.start(user,'source-file','http://localhost');await service.cancel(user,cancelled.id);await service.run(cancelled.id);assert.equal(downloads,1);
+  const revoked=await service.start(user,'source-file','http://localhost');await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['viewer',user.id]);await service.run(revoked.id);assert.equal((await service.get(user,revoked.id)).status,'failed');assert.match((await service.get(user,revoked.id)).error,/Import access ended/);assert.equal(downloads,1);
   await db.query('UPDATE import_jobs SET expires_at=$1 WHERE id=$2',['2000-01-01T00:00:00.000Z',job.id]);await assert.rejects(()=>service.get(user,job.id),/expired/);
 });

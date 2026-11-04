@@ -161,6 +161,8 @@ async function createApplication(options = {}) {
       }
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
+      const importer=()=>{if(!['admin','editor'].includes(session.role))fail(403,'Administrator or editor access required.');};
+      const importAccess=(role,type)=>{if(role!=='admin' && !(role==='editor' && ['advice','debitNotes'].includes(type)))fail(403,'Editors can bulk import payment advice and debit notes only.');};
       if(route==='/api/password-reset/requests' && method==='GET'){admin();return json(response,200,await passwordReset.requests());}
       const resetAction=route.match(/^\/api\/users\/([^/]+)\/(reset-link|reset-password)$/);
       if(resetAction && method==='POST'){
@@ -176,14 +178,14 @@ async function createApplication(options = {}) {
         return json(response,202,await autoSync.control(session,route.split('/').pop(),input.action,origin));
       }
       if(route==='/api/import-jobs'){
-        admin();if(method==='GET')return json(response,200,await bulk.list(session));
+        importer();if(method==='GET')return json(response,200,await bulk.list(session));
         if(method==='POST'){const input=await body(request);const origin=new URL(configuredOrigin || `http://${request.headers.host}`).origin;return json(response,202,await bulk.start(session,input.fileId,origin));}
       }
       if(/^\/api\/import-jobs\/[a-f0-9-]{36}$/i.test(route)){
-        admin();const id=route.split('/').pop();if(method==='GET')return json(response,200,await bulk.get(session,id));if(method==='DELETE')return json(response,200,await bulk.cancel(session,id));
+        importer();const id=route.split('/').pop();if(method==='GET')return json(response,200,await bulk.get(session,id));if(method==='DELETE')return json(response,200,await bulk.cancel(session,id));
       }
       if (route.startsWith('/api/onedrive/')) {
-        admin();
+        if(method==='GET' && ['/api/onedrive/files','/api/onedrive/workbook'].includes(route))importer();else admin();
         if (route === '/api/onedrive/status' && method === 'GET') return json(response,200,await onedrive.status());
         if (route === '/api/onedrive/connect' && method === 'POST') {
           const origin = new URL(configuredOrigin || `http://${request.headers.host}`).origin;
@@ -197,26 +199,27 @@ async function createApplication(options = {}) {
         fail(404,'Not found.');
       }
       if (route === '/api/state' && method === 'GET') return json(response,200,await readWorkspace(db));
-      if (route === '/api/import/definitions' && method === 'GET') {admin();return json(response,200,{definitions:importDefinitions});}
+      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:session.role==='admin'?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes}});}
       if (route === '/api/import/preview' && method === 'POST') {
-        admin();const input=await bulk.project(session,await body(request));const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
+        importer();const raw=await body(request);importAccess(session.role,raw.type);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,current.state);
         if(unused)encodeState(unused);
         return json(response,200,{...preview,revision:current.revision});
       }
       if ((route === '/api/state' && method === 'PUT') || (route === '/api/restore' && method === 'POST') || (route === '/api/import' && method === 'POST') || (route==='/api/records/delete' && method==='POST')) {
         if (session.role === 'viewer') fail(403,'Viewers cannot change workspace data.');
         if (route === '/api/restore') admin();
-        if (route === '/api/import') admin();
+        if (route === '/api/import') importer();
         if (route === '/api/records/delete') admin();
         let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
-        if(route==='/api/import')input=await bulk.project(session,input);
+        if(route==='/api/import'){importAccess(session.role,input.type);input=await bulk.project(session,input);}
         if (!Number.isSafeInteger(input.revision) || input.revision < 0 || input.revision>2147483647) fail(400,'A valid workspace revision is required.');
         let next = ['/api/import','/api/records/delete'].includes(route) ? null : validateState(input.state);
         const result = await db.transaction(async query=>{
           const [previous] = await query('SELECT revision,data FROM workspace WHERE id=1' + (db.kind === 'postgres' ? ' FOR UPDATE' : ''));
           const [actor]=await query('SELECT u.role,u.active,u.must_change FROM app_users u JOIN app_sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.token_hash=$2 AND s.expires_at > $3',[session.id,session.token_hash,new Date().toISOString()]);
-          const allowed=route==='/api/state'?['admin','editor']:['admin'];
+          const allowed=['/api/state','/api/import'].includes(route)?['admin','editor']:['admin'];
           if(!actor?.active || actor.must_change || !allowed.includes(actor.role))fail(403,'Your access changed. Sign in again before saving.');
+          if(route==='/api/import')importAccess(actor.role,input.type);
           if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
           let imported,deleted;const before=decodeState(previous.data);
           if(route==='/api/records/delete'){const result=deleteRecord(before,input);next=result.state;deleted=result.deleted;}

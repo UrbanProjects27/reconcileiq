@@ -33,7 +33,7 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
-test('register bulk import templates map required fields and are available only to administrators',()=>{
+test('register bulk import templates map required fields and are available to administrators and editors',()=>{
   const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
   assert.ok(app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
   const {definitions}=require('./lib/import');app.context.importDefinitions=definitions;
@@ -45,8 +45,16 @@ test('register bulk import templates map required fields and are available only 
   }
   app.run(`modal=(...args)=>{window.bulkModal=args;return {querySelector:s=>document.getElementById(s.slice(1))};};openRegisterBulkImport('advice');`);
   assert.ok(app.run('window.bulkModal[2]').includes('Repeat a UTR'));assert.ok(app.run('window.bulkModal[2]').includes('EPC'));
-  app.run(`sharedSession.user.role='editor';modal=()=>{throw Error('Editor must not import')};showToast=()=>{};openRegisterBulkImport('advice');`);
+  app.run(`sharedSession.user.role='editor';openRegisterBulkImport('advice');`);
+  assert.ok(app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
+  app.run(`sharedSession.user.role='viewer';modal=()=>{throw Error('Viewer must not import')};showToast=()=>{};openRegisterBulkImport('advice');`);
   assert.ok(!app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(!app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
+});
+test('editor import file picker uses the shared connection without opening administrator controls',async()=>{
+  const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'editor'}});
+  app.run(`openOneDriveFolder=(...args)=>{window.browseArgs=args;};window.workspaceAPI=()=>{throw Error('Editor must not request connector administration')};`);
+  await app.run(`openConnect('advice')`);assert.equal(app.run('window.browseArgs[3]'),'advice');
+  await app.run(`openConnect('debitNotes')`);assert.equal(app.run('window.browseArgs[3]'),'debitNotes');
 });
 test('register type survives CSV loading, Excel background preparation and resumed mapping',async()=>{
   const app=workspace();app.run(`window.workspaceAPI=async route=>route==='/api/import/definitions'?{definitions:{}}:{name:'source.csv',sheets:[]};openImportMapping=(...args)=>{window.mappingArgs=args;};`);
