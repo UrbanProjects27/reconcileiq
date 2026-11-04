@@ -71,6 +71,17 @@ integrationTest('editors can import advice and debit notes but cannot import oth
   assert.equal((await request('/api/import/preview','POST',advice,editor)).status,403);assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,403);
   assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);
 });
+integrationTest('buyer groups persist through old clients and imports, validate members and restrict group deletion to admins',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine);const admin=await login();const user=await createUser(db,{email:'group-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});const editor=await login(user.email);
+  const state=emptyState();state.buyerGroups=[{id:'GROUP',name:'Group',customers:['Alpha','Beta']}];
+  const saved=await request('/api/state','PUT',{state,revision:0},editor);assert.equal(saved.status,200);assert.equal(saved.body.state.buyerGroups[0].customers.length,2);
+  const legacy=structuredClone(saved.body.state);delete legacy.buyerGroups;
+  assert.equal((await request('/api/state','PUT',{state:legacy,revision:1},editor)).body.state.buyerGroups.length,1);
+  const removed=structuredClone(saved.body.state);removed.buyerGroups=[];assert.equal((await request('/api/state','PUT',{state:removed,revision:2},editor)).status,403);
+  for(const customers of [['Alpha',' alpha '],[{customer:'Alpha'}],['<unsafe>']]){const invalid=structuredClone(saved.body.state);invalid.buyerGroups[0].customers=customers;assert.equal((await request('/api/state','PUT',{state:invalid,revision:2},editor)).status,400);}
+  const imported=await request('/api/import','POST',{type:'invoices',rows:[['I','Alpha','2026-11-04',100]],mapping:{id:0,customer:1,date:2,amount:3},startRow:2,dateFormat:'iso',revision:2},admin);assert.equal(imported.status,200);assert.equal(imported.body.state.buyerGroups.length,1);
+  const final=structuredClone(imported.body.state);final.buyerGroups=[];assert.equal((await request('/api/state','PUT',{state:final,revision:3},admin)).status,200);assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,4);
+});
 integrationTest('bank customers are required on writes while unchanged legacy receipts remain usable',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();
   const state=emptyState();state.bank=[{ref:'OLD',date:'2026-11-01',amount:100,status:'unmatched'}];

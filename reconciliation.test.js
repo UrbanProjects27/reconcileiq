@@ -33,6 +33,23 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('buyer groups combine multiple customers across views and exports without changing allocation rules',()=>{
+  const app=workspace();app.run(`state.invoices=[{id:'A',customer:'Alpha',date:'2026-11-01',amount:100},{id:'B',customer:'Beta',date:'2026-11-01',amount:200},{id:'C',customer:'Other',date:'2026-11-01',amount:300}];state.customerTerms=[];initializeCustomerTerms();state.returns=[];state.priceReturns=[];state.advice=[];state.debitNotes=[];state.bank=[{ref:'BANK-A',customer:'Alpha',date:'2026-11-01',amount:100,status:'unmatched'},{ref:'BANK-C',customer:'Other',date:'2026-11-01',amount:300,status:'unmatched'}];state.buyerGroups=[{id:'G',name:'Group A',customers:['Alpha','Beta']}];customerScope={buyer:'buyer:G',customer:'all'};`);
+  assert.equal(app.run('dashboardData().invoices.length'),2);assert.equal(app.run('invoiceRegisterData().invoices.length'),2);assert.equal(app.run('customerRows().length'),2);assert.equal(app.run('unallocatedRows().length'),1);
+  assert.ok(app.run('renderBank()').includes('BANK-A'));assert.ok(!app.run('renderBank()').includes('BANK-C'));
+  app.run("exportReport('Invoice Outstanding')");assert.ok(app.context.exportedCSV.includes('Alpha'));assert.ok(app.context.exportedCSV.includes('Beta'));assert.ok(!app.context.exportedCSV.includes('Other'));
+  assert.ok(app.run('allInvoices().length')===3);app.run("customerScope.customer='customer:beta'");assert.equal(app.run('invoiceRegisterData().invoices[0].id'),'B');
+  app.run("customerScope={buyer:'ungrouped',customer:'all'}");assert.equal(app.run('dashboardData().invoices[0].id'),'C');
+  app.run("customerScope={buyer:'buyer:G',customer:'all'};state.buyerGroups=[];normalizeCustomerScope()");assert.equal(app.run('customerScope.buyer'),'all');
+});
+test('buyer groups can be created with several customers and viewer changes are blocked',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});
+  const choices=[{checked:true,dataset:{buyerCustomer:'Alpha'}},{checked:true,dataset:{buyerCustomer:'Beta'}},{checked:false,dataset:{buyerCustomer:'Other'}}];
+  app.context.choices=choices;app.run(`modal=(...args)=>{window.groupModal=args;return {querySelector:s=>document.getElementById(s.slice(1)),querySelectorAll:s=>s==='[data-buyer-customer]'?choices:[]};};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>({state:input.state,revision:2});openBuyerGroupForm();`);
+  app.element('buyerGroupName').value='Buyer Group';await app.element('saveBuyerGroup').onclick();assert.equal(app.run('state.buyerGroups[0].customers.length'),2);assert.equal(app.run('workspaceRevision'),2);
+  assert.ok(!app.run('window.groupModal[2]').includes('data-delete-buyer='));
+  app.run(`sharedSession.user.role='viewer';modal=()=>{throw Error('Viewer must not edit groups')};openBuyerGroups();`);
+});
 test('register bulk import templates map required fields and are available to administrators and editors',()=>{
   const app=workspace(undefined,{state:workspace().run('clone(seed)'),revision:1,user:{role:'admin'}});
   assert.ok(app.run('renderAdvice()').includes('data-action="bulk-import-advice"'));assert.ok(app.run('renderDebit()').includes('data-action="bulk-import-debit"'));
@@ -281,7 +298,7 @@ test('invoice brand and customer filters combine, preserve full mixed-brand invo
     {id:'BLANK',customer:'Alpha',date:today,amount:300}
   ];state.advice=[];state.returns=[];state.priceReturns=[];invoiceFilter.brand='brand:b';invoiceFilter.customer='customer:alpha';`);
   assert.equal(app.run("invoiceRegisterData().invoices.map(x=>x.id).join(',')"),'MIX');assert.equal(app.run('invoiceRegisterData().invoices[0].amount'),100);
-  const html=app.run('renderInvoices()');assert.ok(html.includes('id="invoiceBrandFilter"'));assert.ok(html.includes('id="invoiceCustomerFilter"'));assert.ok(html.includes('value="brand:b" selected'));
+  const html=app.run('renderInvoices()');assert.ok(html.includes('id="invoiceBrandFilter"'));assert.ok(app.run('customerScopeMarkup()').includes('id="scopeCustomer"'));assert.ok(html.includes('value="brand:b" selected'));
   app.run("showToast=()=>{};action('export-invoices',{})");assert.equal(app.context.exportedCSV.split('\r\n').length,2);assert.ok(app.context.exportedCSV.includes('Ageing Days'));
   app.run("invoiceFilter.brand='unassigned'");assert.equal(app.run("invoiceRegisterData().invoices[0].id"),'BLANK');
   app.run("pagePositions.invoices=9;action('clear-filters',{})");assert.equal(app.run('invoiceRegisterData().invoices.length'),3);assert.equal(app.run('pagePositions.invoices'),0);

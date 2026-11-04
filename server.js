@@ -54,7 +54,7 @@ async function audit(query, user, action, detail) {
 function changeSummary(before, after) {
   const summary = {};
   for (const key of Object.keys(emptyState())) {
-    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) summary[key] = { before: before[key].length, after: after[key].length };
+    if (JSON.stringify(before[key] || []) !== JSON.stringify(after[key] || [])) summary[key] = { before: (before[key] || []).length, after: (after[key] || []).length };
   }
   return summary;
 }
@@ -222,6 +222,11 @@ async function createApplication(options = {}) {
           if(route==='/api/import')importAccess(actor.role,input.type);
           if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
           let imported,deleted;const before=decodeState(previous.data);
+          if(route==='/api/state' && input.state.buyerGroups===undefined)next.buyerGroups=before.buyerGroups || [];
+          if(route==='/api/state' && actor.role!=='admin'){
+            const groupIds=new Set((next.buyerGroups || []).map(group=>group.id));
+            if((before.buyerGroups || []).some(group=>!groupIds.has(group.id)))fail(403,'Only administrators can delete buyer groups.');
+          }
           if(route==='/api/records/delete'){const result=deleteRecord(before,input);next=result.state;deleted=result.deleted;}
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
