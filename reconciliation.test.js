@@ -33,6 +33,14 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('invoice remarks save and clear, retain failed drafts and are read-only for viewers',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});const id=initial.invoices[0].id;
+  app.context.invoiceId=id;app.run(`modal=(title,subtitle,content)=>{window.invoiceMarkup=content;};showToast=()=>{};window.remarkWrites=0;window.workspaceAPI=async(route,method,input)=>{window.remarkWrites++;return {state:JSON.parse(JSON.stringify(input.state)),revision:2};};openInvoice(invoiceId);`);
+  assert.ok(app.run('window.invoiceMarkup').includes('id="invoiceRemarks"'));app.element('invoiceRemarks').value='Customer confirmed\nFollow up on Friday';await app.element('saveInvoiceRemarks').onclick();assert.equal(app.run('state.invoices[0].remarks'),'Customer confirmed\nFollow up on Friday');assert.ok(app.run('window.invoiceMarkup').includes('Follow up on Friday'));
+  app.run(`window.workspaceAPI=async()=>{throw Error('Unable to save')};`);app.element('invoiceRemarks').value='Unsaved follow-up';await app.element('saveInvoiceRemarks').onclick();assert.equal(app.element('invoiceRemarks').value,'Unsaved follow-up');assert.equal(app.element('invoiceRemarksError').textContent,'Unable to save');assert.equal(app.run('state.invoices[0].remarks'),'Customer confirmed\nFollow up on Friday');
+  app.run(`window.workspaceAPI=async(route,method,input)=>({state:JSON.parse(JSON.stringify(input.state)),revision:3});`);app.element('invoiceRemarks').value='';await app.element('saveInvoiceRemarks').onclick();assert.equal(app.run('state.invoices[0].remarks'),'');
+  app.run(`sharedSession.user.role='viewer';openInvoice(invoiceId);`);assert.ok(!app.run('window.invoiceMarkup').includes('id="saveInvoiceRemarks"'));assert.ok(app.run('window.invoiceMarkup').includes('No remarks added.'));
+});
 test('buyer groups combine multiple customers across views and exports without changing allocation rules',()=>{
   const app=workspace();app.run(`state.invoices=[{id:'A',customer:'Alpha',date:'2026-11-01',amount:100},{id:'B',customer:'Beta',date:'2026-11-01',amount:200},{id:'C',customer:'Other',date:'2026-11-01',amount:300}];state.customerTerms=[];initializeCustomerTerms();state.returns=[];state.priceReturns=[];state.advice=[];state.debitNotes=[];state.bank=[{ref:'BANK-A',customer:'Alpha',date:'2026-11-01',amount:100,status:'unmatched'},{ref:'BANK-C',customer:'Other',date:'2026-11-01',amount:300,status:'unmatched'}];state.buyerGroups=[{id:'G',name:'Group A',customers:['Alpha','Beta']}];customerScope={buyer:'buyer:G',customer:'all'};`);
   assert.equal(app.run('dashboardData().invoices.length'),2);assert.equal(app.run('invoiceRegisterData().invoices.length'),2);assert.equal(app.run('customerRows().length'),2);assert.equal(app.run('unallocatedRows().length'),1);
