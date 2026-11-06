@@ -33,6 +33,32 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('opening receivables use original due dates and share same-buyer payment allocation without changing sales credit terms',()=>{
+  const app=workspace();app.run(`state={invoices:[],advice:[],bank:[],returns:[],priceReturns:[],debitNotes:[],logs:[],buyerGroups:[],customerTerms:[{customer:'Acme',creditDays:90}]};
+    state.invoices.push(openingBalanceRecord({customer:'acme',amount:1000,date:today,dueDate:'2020-01-01',reference:'OLD-TEST',remarks:'Carried forward'},'OB-TEST'));
+    state.invoices.push({id:'SALE',customer:'Acme',amount:200,date:today});
+    state.bank.push({ref:'RECEIPT',customer:'Acme',date:today,amount:1000,status:'unmatched'});`);
+  assert.equal(app.run("invoiceData(state.invoices[0]).dueDate"),'2020-01-01');assert.equal(app.run('invoiceData(state.invoices[0]).status'),'overdue');assert.equal(app.run('invoiceData(state.invoices[1]).status'),'due');
+  app.run(`state.advice.push(...adviceBatchRecords([{invoice:'OB-TEST',type:'Payment',amount:600,description:'Earlier dues'}],'RECEIPT','PA-TEST'));`);
+  assert.equal(app.run('invoiceData(state.invoices[0]).pending'),400);assert.equal(app.run('bankRows()[0].pendingToMatch'),400);assert.equal(app.run('customerRows()[0].overdue'),400);assert.equal(app.run('totals().due'),200);
+  app.run(`state.advice.push(...adviceBatchRecords([{invoice:'OB-TEST',type:'Payment',amount:400,description:'Final earlier dues'}],'RECEIPT','PA-FINAL'));`);
+  assert.equal(app.run('invoiceData(state.invoices[0]).status'),'settled');assert.equal(app.run('bankRows()[0].pendingToMatch'),0);
+  app.run(`state.bank.push({ref:'FOREIGN',customer:'Other',date:today,amount:100,status:'unmatched'});`);
+  assert.throws(()=>app.run(`adviceBatchRecords([{invoice:'OB-TEST',type:'Payment',amount:10,description:'Wrong buyer'}],'FOREIGN','PA-BAD')`),/buyer/);
+  app.run(`showToast=()=>{};exportReport('Invoice Outstanding');`);const csv=require('csv-parse/sync').parse(app.context.exportedCSV);assert.equal(csv[1][csv[0].indexOf('Receivable Type')],'Opening balance');assert.equal(csv[1][csv[0].indexOf('Earlier Invoice / Reference')],'OLD-TEST');
+  assert.ok(app.run('renderCustomers()').includes('Opening balances'));assert.ok(app.run('invoiceTable(allInvoices())').includes('Opening balance'));
+});
+test('opening-balance form validates entries, persists once, retains failed drafts and restricts viewers',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});
+  app.run(`modal=(title,subtitle,content,footer)=>{window.openingMarkup=content+footer;};showToast=()=>{};render=()=>{};closeModal=()=>{};window.openingWrites=0;window.workspaceAPI=async(route,method,input)=>{window.openingWrites++;return {state:JSON.parse(JSON.stringify(input.state)),revision:2};};openNewOpeningBalance();`);
+  const customer=initial.invoices[0].customer;app.element('openingCustomer').value=customer;app.element('openingDate').value='2026-04-01';app.element('openingDueDate').value='2026-03-01';app.element('openingAmount').value='1200';app.element('openingReference').value='Legacy reference';app.element('openingRemarks').value='Opening dues';
+  await app.element('saveOpeningBalance').onclick();assert.equal(app.run('state.invoices[0].recordType'),'openingBalance');assert.equal(app.run('window.openingWrites'),1);
+  await app.element('saveOpeningBalance').onclick();assert.equal(app.run('window.openingWrites'),1);assert.match(app.element('openingError').textContent,/already saved/);
+  app.run(`openNewOpeningBalance();window.workspaceAPI=async()=>{throw Error('Save failed')};`);await app.element('saveOpeningBalance').onclick();assert.equal(app.element('openingAmount').value,'1200');assert.equal(app.element('openingError').textContent,'Save failed');assert.equal(app.run("state.invoices.filter(x=>x.recordType==='openingBalance').length"),1);
+  for(const patch of [{amount:0},{amount:'bad'},{date:'2026-02-31'},{dueDate:''},{remarks:'<script>'}]){app.context.openingInput={customer,amount:100,date:'2026-04-01',dueDate:'2026-03-01',...patch};assert.throws(()=>app.run("openingBalanceRecord(openingInput,'OB')"));}
+  app.run(`sharedSession.user.role='viewer';window.openingMarkup='unchanged';openNewOpeningBalance();`);assert.equal(app.run('window.openingMarkup'),'unchanged');
+});
+
 test('invoice remarks save and clear, retain failed drafts and are read-only for viewers',async()=>{
   const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});const id=initial.invoices[0].id;
   app.context.invoiceId=id;app.run(`modal=(title,subtitle,content)=>{window.invoiceMarkup=content;};showToast=()=>{};window.remarkWrites=0;window.workspaceAPI=async(route,method,input)=>{window.remarkWrites++;return {state:JSON.parse(JSON.stringify(input.state)),revision:2};};openInvoice(invoiceId);`);

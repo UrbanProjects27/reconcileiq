@@ -71,6 +71,25 @@ integrationTest('editors can import advice and debit notes but cannot import oth
   assert.equal((await request('/api/import/preview','POST',advice,editor)).status,403);assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,403);
   assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);
 });
+integrationTest('customer opening balances persist, allocate partially, enforce buyer scope and retain admin-only deletion',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login();const state=emptyState();
+  state.invoices=[{id:'OB-TEST',recordType:'openingBalance',customer:'Alpha',date:'2026-04-01',openingDueDate:'2026-03-01',openingReference:'Earlier dues',amount:1000}];
+  state.bank=[{ref:'U-TEST',customer:'Alpha',date:'2026-11-01',amount:1000,status:'unmatched'}];state.buyerGroups=[{id:'G',name:'Assigned',customers:['Alpha']}];
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const user=await createUser(db,{email:'opening-editor@example.com',name:'Editor',password,role:'editor',mustChange:false,buyerGroupIds:['G']}),editor=await login(user.email);
+  const current=(await request('/api/state','GET',undefined,editor)).body;assert.equal(current.state.invoices[0].openingDueDate,'2026-03-01');
+  current.state.advice.push({id:'PA',customer:'Alpha',date:'2026-11-01',invoice:'OB-TEST',amount:600,type:'Payment',utr:'U-TEST',description:'Earlier dues'});
+  const saved=await request('/api/state','PUT',current,editor);assert.equal(saved.status,200);assert.equal(require('./finance').rows(saved.body.state)[0].pendingToMatch,400);
+  const forged=structuredClone(saved.body);forged.state.invoices.push({...state.invoices[0],id:'OB-FOREIGN',customer:'Other'});assert.equal((await request('/api/state','PUT',forged,editor)).status,403);
+  assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'OB-TEST',revision:2},editor)).status,403);
+  assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'OB-TEST',revision:2},admin)).status,409);
+  const removed=structuredClone(saved.body);removed.state.invoices=[];removed.state.advice=[];assert.equal((await request('/api/state','PUT',removed,editor)).status,403);
+});
+test('opening balance validation rejects missing or invalid due dates and invalid receivable types',()=>{
+  const state=emptyState();state.invoices=[{id:'OB',recordType:'openingBalance',customer:'Alpha',date:'2026-04-01',openingDueDate:'2026-03-01',amount:1000}];assert.equal(validateState(state).invoices[0].recordType,'openingBalance');
+  for(const openingDueDate of [undefined,'2026-02-31','not-a-date']){const invalid=structuredClone(state);invalid.invoices[0].openingDueDate=openingDueDate;assert.throws(()=>validateState(invalid));}
+  state.invoices[0].recordType='other';assert.throws(()=>validateState(state),/receivable type/);
+});
 integrationTest('buyer groups persist through old clients and imports, validate members and restrict group deletion to admins',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine);const admin=await login();const user=await createUser(db,{email:'group-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});const editor=await login(user.email);
   const state=emptyState();state.buyerGroups=[{id:'GROUP',name:'Group',customers:['Alpha','Beta']}];

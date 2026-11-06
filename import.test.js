@@ -8,6 +8,10 @@ test('imports map Indian currency and explicit dates, retain customer-level cred
   const duplicate=prepareImport(invoiceInput(),result.state);assert.equal(duplicate.counts.skipped,1);assert.equal(duplicate.canImport,false);
   const conflicting=prepareImport(invoiceInput([['INV-001','Acme','03/11/2026','50']]),result.state);assert.equal(conflicting.counts.invalid,1);assert.equal(conflicting.state,undefined);assert.match(conflicting.errors[0].message,/different values/);
 });
+test('sales imports never treat an opening balance as a sales invoice with the same identifier',()=>{
+  const current=emptyState();current.invoices=[{id:'INV-001',recordType:'openingBalance',customer:'Acme',date:'2026-11-03',openingDueDate:'2026-03-01',amount:100000.5}];
+  const result=prepareImport(invoiceInput(),current);assert.equal(result.canImport,false);assert.match(result.errors[0].message,/opening balance/);assert.equal(current.invoices[0].recordType,'openingBalance');
+});
 test('invalid rows block the complete batch and report source rows',()=>{
   const rows=[['INV-1','Acme','03/11/2026',100],['INV-2','Acme','31/02/2026',200],['INV-3','Acme','03/11/2026',-1],['INV-4','<script>','03/11/2026',50]];
   const result=prepareImport(invoiceInput(rows),emptyState());assert.equal(result.canImport,false);assert.equal(result.state,undefined);assert.deepEqual(result.errors.map(e=>e.row),[3,4,5]);
