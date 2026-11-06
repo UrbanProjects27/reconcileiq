@@ -2,6 +2,8 @@
 
 Customer opening receivables: use **Customer Summary → Opening balances → Add opening balance**. Enter the unpaid amount as of reconciliation start, its original due date and an optional earlier invoice reference. Consolidate by customer or use separate entries when original due dates differ. Do not import the same underlying invoice again. Opening balances carry an `OB-` reference and are included in dashboard/customer receivables, ageing and exports. Allocate bank receipts through Payment Advice by selecting the customer's opening balance; partial payments leave the remainder outstanding. The existing ₹10 rounding rule and same-customer allocation checks apply. Admins/editors can add entries within their customer access; only admins can delete, and linked allocations must be removed first.
 
+Administrators can edit an existing opening balance through **Customer Summary → Opening balances → View → Edit opening balance**. The OB identifier and linked allocations are preserved. Customers with linked entries cannot be changed until those entries are removed. Existing opening-balance financial fields are protected on the server; editors can still add comments.
+
 Shared invoice reconciliation workspace with email/password sign-in, Admin / Editor / Viewer roles, centralized storage, revision conflict protection, activity history and recoverable snapshots.
 
 ## Run locally

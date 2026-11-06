@@ -84,6 +84,12 @@ integrationTest('customer opening balances persist, allocate partially, enforce 
   assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'OB-TEST',revision:2},editor)).status,403);
   assert.equal((await request('/api/records/delete','POST',{collection:'invoices',index:0,identifier:'OB-TEST',revision:2},admin)).status,409);
   const removed=structuredClone(saved.body);removed.state.invoices=[];removed.state.advice=[];assert.equal((await request('/api/state','PUT',removed,editor)).status,403);
+  const edited=structuredClone(saved.body);edited.state.invoices[0].amount=1200;edited.state.invoices[0].openingDueDate='2026-02-01';edited.state.invoices[0].openingReference='Corrected earlier dues';
+  assert.equal((await request('/api/state','PUT',edited,editor)).status,403);
+  const changed=await request('/api/state','PUT',edited,admin);assert.equal(changed.status,200);assert.equal(changed.body.state.invoices[0].id,'OB-TEST');assert.equal(changed.body.state.invoices[0].amount,1200);assert.equal(changed.body.state.advice[0].invoice,'OB-TEST');assert.equal(require('./finance').rows(changed.body.state)[0].pendingToMatch,400);
+  const wrongCustomer=structuredClone(changed.body);wrongCustomer.state.invoices[0].customer='Other';assert.equal((await request('/api/state','PUT',wrongCustomer,admin)).status,400);
+  const comment=structuredClone(changed.body);comment.state.invoices[0].remarks='Editor follow-up';assert.equal((await request('/api/state','PUT',comment,editor)).status,200);
+  const conversion=structuredClone(changed.body);conversion.state.invoices[0].recordType='invoice';delete conversion.state.invoices[0].openingDueDate;delete conversion.state.invoices[0].openingReference;conversion.revision=4;assert.equal((await request('/api/state','PUT',conversion,editor)).status,403);
 });
 test('opening balance validation rejects missing or invalid due dates and invalid receivable types',()=>{
   const state=emptyState();state.invoices=[{id:'OB',recordType:'openingBalance',customer:'Alpha',date:'2026-04-01',openingDueDate:'2026-03-01',amount:1000}];assert.equal(validateState(state).invoices[0].recordType,'openingBalance');

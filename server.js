@@ -11,7 +11,7 @@ const {createBulkImport}=require('./lib/bulk-import');
 const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
-const {requireAdminForRemovals,deleteRecord}=require('./lib/records');
+const {requireAdminForRemovals,requireAdminForOpeningEdits,deleteRecord}=require('./lib/records');
 const customerAccess=require('./lib/customer-access');
 const {gzipSync,gunzipSync}=require('node:zlib');
 
@@ -241,6 +241,7 @@ async function createApplication(options = {}) {
           // Historical backups may predate newly required fields. Their schema
           // is still validated; new-record rules apply to regular writes/imports.
           requireAdminForRemovals(before,next,actor.role);
+          requireAdminForOpeningEdits(before,next,actor.role);
           if(!['/api/restore','/api/records/delete'].includes(route)){
             validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);
           }

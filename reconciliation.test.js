@@ -59,6 +59,18 @@ test('opening-balance form validates entries, persists once, retains failed draf
   app.run(`sharedSession.user.role='viewer';window.openingMarkup='unchanged';openNewOpeningBalance();`);assert.equal(app.run('window.openingMarkup'),'unchanged');
 });
 
+test('admins edit opening balances in place with allocations retained; editors cannot open the edit form',async()=>{
+  const initial=workspace().run('clone(seed)');initial.invoices.unshift({id:'OB-EDIT',recordType:'openingBalance',customer:'Acme',date:'2026-04-01',openingDueDate:'2026-03-01',amount:1000,roundOff:5,code:'C-TEST',openingReference:'Old reference',remarks:'Old note'});
+  initial.bank.push({ref:'EDIT-UTR',customer:'Acme',date:'2026-11-01',amount:1000,status:'review'});initial.advice.push({id:'PA-EDIT',customer:'Acme',date:'2026-11-01',invoice:'OB-EDIT',type:'Payment',amount:600,utr:'EDIT-UTR',description:'Earlier dues'});
+  const app=workspace(undefined,{state:initial,revision:1,user:{role:'admin'}});
+  app.run(`modal=(title,subtitle,content,footer)=>{window.editMarkup=content+footer;};showToast=()=>{};render=()=>{};closeModal=()=>{};window.workspaceAPI=async(route,method,input)=>({state:JSON.parse(JSON.stringify(input.state)),revision:2});openInvoice('OB-EDIT');`);assert.ok(app.run('window.editMarkup').includes('id="editOpeningBalance"'));
+  app.element('editOpeningBalance').onclick();assert.equal(app.element('openingAmount').value,1000);assert.equal(app.element('openingDueDate').value,'2026-03-01');assert.equal(app.element('openingCustomer').disabled,true);
+  app.element('openingAmount').value='1200';app.element('openingDueDate').value='2026-02-01';app.element('openingReference').value='Corrected reference';await app.element('saveOpeningBalance').onclick();
+  assert.equal(app.run("state.invoices.find(row=>row.id==='OB-EDIT').amount"),1200);assert.equal(app.run("state.invoices.find(row=>row.id==='OB-EDIT').roundOff"),5);assert.equal(app.run("state.invoices.find(row=>row.id==='OB-EDIT').code"),'C-TEST');assert.equal(app.run("state.advice.find(row=>row.id==='PA-EDIT').invoice"),'OB-EDIT');assert.equal(app.run("invoiceData(state.invoices.find(row=>row.id==='OB-EDIT')).pending"),595);
+  app.run(`openNewOpeningBalance('OB-EDIT');window.workspaceAPI=async()=>{throw Error('Edit failed')};`);app.element('openingAmount').value='1300';await app.element('saveOpeningBalance').onclick();assert.equal(app.element('openingAmount').value,'1300');assert.equal(app.element('openingError').textContent,'Edit failed');assert.equal(app.run("state.invoices.find(row=>row.id==='OB-EDIT').amount"),1200);
+  app.run(`sharedSession.user.role='editor';openInvoice('OB-EDIT');`);assert.ok(!app.run('window.editMarkup').includes('id="editOpeningBalance"'));app.run(`window.editMarkup='unchanged';openNewOpeningBalance('OB-EDIT');`);assert.equal(app.run('window.editMarkup'),'unchanged');
+});
+
 test('invoice remarks save and clear, retain failed drafts and are read-only for viewers',async()=>{
   const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});const id=initial.invoices[0].id;
   app.context.invoiceId=id;app.run(`modal=(title,subtitle,content)=>{window.invoiceMarkup=content;};showToast=()=>{};window.remarkWrites=0;window.workspaceAPI=async(route,method,input)=>{window.remarkWrites++;return {state:JSON.parse(JSON.stringify(input.state)),revision:2};};openInvoice(invoiceId);`);
