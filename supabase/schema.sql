@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS reconcileiq.app_sessions (
  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES reconcileiq.app_users(id), csrf TEXT NOT NULL, expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS reconcileiq.workspace (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reconcileiq.claim_attachments (claim_id TEXT PRIMARY KEY, filename TEXT NOT NULL, media_type TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS reconcileiq.audit_events (
  id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, actor_name TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
 );
@@ -32,6 +33,7 @@ CREATE INDEX IF NOT EXISTS audit_created ON reconcileiq.audit_events(created_at)
 ALTER TABLE reconcileiq.app_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.app_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.workspace ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reconcileiq.claim_attachments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.workspace_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reconcileiq.login_attempts ENABLE ROW LEVEL SECURITY;

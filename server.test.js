@@ -71,6 +71,29 @@ integrationTest('editors can import advice and debit notes but cannot import oth
   assert.equal((await request('/api/import/preview','POST',advice,editor)).status,403);assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,403);
   assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);
 });
+integrationTest('brand claims and attachments save atomically, enforce customer access and require admin deletion and brand terms',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login(),state=emptyState();state.buyerGroups=[{id:'G-CLAIM',name:'Assigned',customers:['Buyer']}];state.brandTerms=[{brand:'Brand A',creditDays:30}];
+  state.brandClaims=[{id:'CLM-OTHER',relatedMonth:'2026-10',brand:'Brand A',customer:'Other',claimType:'Fee',receivedDate:'2026-11-01',buyerDocument:'DN-OTHER',buyerDNAmount:500}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const user=await createUser(db,{email:'claim-editor@example.com',name:'Editor',password,role:'editor',mustChange:false,buyerGroupIds:['G-CLAIM']}),editor=await login(user.email);
+  const draft=(await request('/api/state','GET',undefined,editor)).body;assert.equal(draft.state.brandClaims.length,0);
+  draft.state.brandClaims.push({id:'CLM-OWN',relatedMonth:'2026-10',brand:'Brand A',customer:'Buyer',claimType:'Promotion',receivedDate:'2026-11-01',buyerDocument:'DN-OWN',buyerDNAmount:1000,buyerCNNumber:'CANCEL-CN',buyerCNAmount:100,status:'Settled',netAmount:0,dueDate:'1900-01-01'});
+  const attachment={claimId:'CLM-OWN',name:'claim.pdf',data:Buffer.from('%PDF-1.4\nsynthetic test attachment').toString('base64')};
+  const saved=await request('/api/state','PUT',{...draft,claimAttachment:attachment},editor);assert.equal(saved.status,200,JSON.stringify(saved.body));assert.equal(saved.body.state.brandClaims[0].status,'Unsettled');assert.equal(saved.body.state.brandClaims[0].netAmount,900);assert.equal(saved.body.state.brandClaims[0].dueDate,'2026-12-01');assert.equal((await request('/api/brand-claims/CLM-OWN/attachment','GET',undefined,editor)).body.data,attachment.data);assert.equal((await request('/api/brand-claims/CLM-OTHER/attachment','GET',undefined,editor)).status,404);
+  const forged=structuredClone(saved.body);forged.state.brandTerms[0].creditDays=0;assert.equal((await request('/api/state','PUT',forged,editor)).status,403);
+  assert.equal((await request('/api/state','PUT',{...saved.body,claimAttachment:{...attachment,claimId:'CLM-OTHER'}},editor)).status,403);
+  const badFile={...attachment,data:Buffer.from('not a PDF').toString('base64')};assert.equal((await request('/api/state','PUT',{...saved.body,claimAttachment:badFile},editor)).status,400);assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);
+  const invalidWrite=structuredClone(saved.body);invalidWrite.state.bank.push({ref:'BAD-CLAIM-WRITE',date:'2026-11-11',amount:10,status:'unmatched'});assert.equal((await request('/api/state','PUT',{...invalidWrite,claimAttachment:{...attachment,data:Buffer.from('%PDF-1.4\nreplacement must roll back').toString('base64')}},admin)).status,400);assert.equal((await request('/api/brand-claims/CLM-OWN/attachment','GET',undefined,editor)).body.data,attachment.data);
+  const settled=structuredClone(saved.body);Object.assign(settled.state.brandClaims[0],{relatedCNNumber:'BRAND-CN',relatedCNDate:'2026-11-11',relatedCNAmount:895});const completed=await request('/api/state','PUT',settled,editor);assert.equal(completed.status,200);assert.equal(completed.body.state.brandClaims[0].status,'Settled');assert.equal(completed.body.state.brandClaims[0].pendingAmount,5);
+  const legacy=structuredClone(completed.body);delete legacy.state.brandClaims;delete legacy.state.brandTerms;const kept=await request('/api/state','PUT',legacy,editor);assert.equal(kept.status,200);assert.equal(kept.body.state.brandClaims.length,1);
+  assert.equal((await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},editor)).status,403);
+  const deleted=await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},admin);assert.equal(deleted.status,200,JSON.stringify(deleted.body));assert.equal((await db.query('SELECT claim_id FROM claim_attachments')).length,0);
+});
+test('claim validation checks months, dates and paired CN fields; attachment validation checks content and limits',()=>{
+  const state=emptyState();state.brandClaims=[{id:'C',relatedMonth:'2026-10',brand:'A',customer:'Buyer',claimType:'Fee',receivedDate:'2026-11-01',buyerDocument:'DN',buyerDNAmount:100}];assert.equal(validateState(state).brandClaims[0].status,'Unsettled');
+  for(const patch of [{relatedMonth:'2026-13'},{receivedDate:'2026-02-31'},{relatedCNNumber:'CN'},{relatedCNAmount:1},{buyerCNAmount:1},{buyerDNAmount:-1}]){const invalid=structuredClone(state);Object.assign(invalid.brandClaims[0],patch);assert.throws(()=>validateState(invalid));}
+  const {validateAttachment}=require('./lib/claim-attachments');assert.equal(validateAttachment({claimId:'C',name:'test.jpg',data:Buffer.from([255,216,255,224]).toString('base64')}).mediaType,'image/jpeg');assert.throws(()=>validateAttachment({claimId:'C',name:'test.pdf',data:Buffer.from('bad').toString('base64')}));assert.throws(()=>validateAttachment({claimId:'C',name:'test.pdf',data:Buffer.alloc(2*1024*1024+1).toString('base64')}));
+});
+
 integrationTest('DN CN workflow persists editor updates, derives settlement and blocks cross-buyer invoice links',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine),admin=await login(),state=emptyState();state.invoices=[{id:'I-DN',customer:'Buyer',date:'2026-11-01',amount:5000},{id:'I-OTHER',customer:'Other',date:'2026-11-01',amount:5000}];
   assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);

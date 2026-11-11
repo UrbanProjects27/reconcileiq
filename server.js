@@ -12,6 +12,7 @@ const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
 const {requireAdminForRemovals,requireAdminForOpeningEdits,deleteRecord}=require('./lib/records');
+const {validateAttachment}=require('./lib/claim-attachments');
 const customerAccess=require('./lib/customer-access');
 const {gzipSync,gunzipSync}=require('node:zlib');
 
@@ -201,6 +202,13 @@ async function createApplication(options = {}) {
         fail(404,'Not found.');
       }
       if (route === '/api/state' && method === 'GET') {const current=await readWorkspace(db);return json(response,200,{revision:current.revision,state:customerAccess.filterState(current.state,session)});}
+      if(/^\/api\/brand-claims\/[^/]+\/attachment$/.test(route) && method==='GET'){
+        const id=decodeURIComponent(route.split('/')[3]),current=await readWorkspace(db);
+        if(!(customerAccess.filterState(current.state,session).brandClaims || []).some(row=>row.id===id))fail(404,'Claim attachment not found.');
+        const [file]=await db.query('SELECT filename,media_type,data FROM claim_attachments WHERE claim_id=$1',[id]);
+        if(!file)fail(404,'No attachment is saved for this claim.');
+        return json(response,200,{name:file.filename,mediaType:file.media_type,data:file.data});
+      }
       if(route==='/api/import/file' && method==='POST'){
         importer();const input=await body(request);if(typeof input.name!=='string' || !/\.csv$/i.test(input.name) || typeof input.data!=='string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(input.data))fail(400,'Choose a UTF-8 CSV file.');
         const bytes=Buffer.from(input.data,'base64');if(bytes.length>2*1024*1024)fail(400,'Use a CSV file up to 2 MB. Split larger files before importing.');
@@ -219,6 +227,8 @@ async function createApplication(options = {}) {
         if (route === '/api/import') importer();
         if (route === '/api/records/delete') admin();
         let input = await body(request,route==='/api/import'?4*1024*1024:maxStateBytes);
+        const claimAttachment=input.claimAttachment===undefined?null:validateAttachment(input.claimAttachment);
+        if(claimAttachment && route!=='/api/state')fail(400,'Attachments must be saved with a claim.');
         if(route==='/api/import'){importAccess(session.role,input.type);if(input.jobId)customerAccess.requireSharedFileAccess(session);input=await bulk.project(session,input);}
         if (!Number.isSafeInteger(input.revision) || input.revision < 0 || input.revision>2147483647) fail(400,'A valid workspace revision is required.');
         let next = ['/api/import','/api/records/delete'].includes(route) ? null : validateState(input.state);
@@ -242,6 +252,14 @@ async function createApplication(options = {}) {
           // is still validated; new-record rules apply to regular writes/imports.
           requireAdminForRemovals(before,next,actor.role);
           requireAdminForOpeningEdits(before,next,actor.role);
+          if(claimAttachment){
+            const claim=(next.brandClaims || []).find(row=>row.id===claimAttachment.claimId);
+            if(!claim || !(customerAccess.filterState(next,actor).brandClaims || []).some(row=>row.id===claim.id))fail(403,'Choose a claim within your customer access.');
+            claim.attachmentName=claimAttachment.name;
+            await query('INSERT INTO claim_attachments(claim_id,filename,media_type,data,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(claim_id) DO UPDATE SET filename=excluded.filename,media_type=excluded.media_type,data=excluded.data,updated_at=excluded.updated_at',[claim.id,claimAttachment.name,claimAttachment.mediaType,claimAttachment.data,new Date().toISOString()]);
+          }
+          const keptClaimIds=new Set((next.brandClaims || []).map(row=>row.id));
+          for(const oldClaim of before.brandClaims || [])if(!keptClaimIds.has(oldClaim.id))await query('DELETE FROM claim_attachments WHERE claim_id=$1',[oldClaim.id]);
           if(!['/api/restore','/api/records/delete'].includes(route)){
             validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);
           }

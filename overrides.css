@@ -42,3 +42,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .account-form #teamBuyerGroups label{display:flex;flex-direction:row;align-items:center;gap:8px}
 .account-form #teamBuyerGroups input{width:auto;height:auto}
 .detail-section #invoiceRemarks{width:100%;min-height:100px;resize:vertical;padding:10px;border:1px solid #dce3ed;border-radius:6px;font:inherit;box-sizing:border-box}
+.nav-item[data-view="claims"]{white-space:normal;line-height:1.4;min-height:44px;height:auto}
+#claimCalculation>div{display:flex;flex-direction:column;gap:6px;padding:10px}

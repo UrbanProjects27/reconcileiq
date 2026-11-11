@@ -24,6 +24,13 @@
     const workflow=row.settlementMode==='creditNote',hasCredit=!!String(row.creditNoteNumber || '').trim();
     return {status:hasCredit?'Settled':'Unsettled',difference:workflow?(cents(row.amount)-cents(row.creditNoteAmount))/100:0};
   }
-  const api={rows,synchronize,debitNote};
+  function claim(row,terms=[]){
+    const creditDays=terms.find(term=>buyer(term.brand)===buyer(row.brand))?.creditDays ?? 45;
+    const due=new Date(row.receivedDate+'T00:00:00Z');due.setUTCDate(due.getUTCDate()+creditDays);
+    const net=cents(row.buyerDNAmount)-cents(row.buyerCNAmount),pending=net-cents(row.relatedCNAmount);
+    const hasCN=!!String(row.relatedCNNumber || '').trim() && !!row.relatedCNDate;
+    return {netAmount:net/100,pendingAmount:pending/100,dueDate:due.toISOString().slice(0,10),brandCreditDays:creditDays,status:!hasCN?'Unsettled':Math.abs(pending)<=1000?'Settled':'Pending'};
+  }
+  const api={rows,synchronize,debitNote,claim};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ReconcileIQBank=api;
 })(typeof window==='undefined'?globalThis:window);
