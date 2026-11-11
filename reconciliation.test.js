@@ -33,6 +33,25 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('DN and CN differences recalculate receivables, brand totals, customer balances and exports without affecting bank cash',()=>{
+  const app=workspace();app.run(`state={invoices:[{id:'I-DN',customer:'Buyer',date:today,amount:5000,brandName:'A / B',brandAmounts:[{brandName:'A',amount:3000},{brandName:'B',amount:2000}]}],advice:[],bank:[{ref:'U-DN',customer:'Buyer',date:today,amount:1000,status:'unmatched'}],returns:[],priceReturns:[],customerTerms:[],buyerGroups:[],logs:[],debitNotes:[{id:'DN-TEST',customer:'Buyer',invoice:'I-DN',date:today,amount:1000,creditNoteAmount:0,creditNoteNumber:'',settlementMode:'creditNote',status:'Unsettled'}]};showToast=()=>{};`);
+  assert.equal(app.run('allInvoices()[0].pending'),4000);assert.equal(app.run('customerRows()[0].debitAdjustment'),1000);assert.equal(app.run('bankRows()[0].pendingToMatch'),1000);
+  app.run(`state.debitNotes[0].creditNoteNumber='CN-TEST';state.debitNotes[0].creditNoteAmount=700;`);assert.equal(app.run('allInvoices()[0].pending'),4700);assert.equal(app.run('allInvoices()[0].debitAdjustment'),300);assert.ok(app.run('renderDebit()').includes('Settled'));
+  app.run(`dashboardBrand='brand:a';`);assert.equal(app.run('totals(dashboardData().invoices).debitAdjustment'),180);assert.equal(app.run('totals(dashboardData().invoices).pending'),2820);
+  app.run(`exportReport('Invoice Outstanding');`);let csv=require('csv-parse/sync').parse(app.context.exportedCSV);assert.equal(csv[1][csv[0].indexOf('Debit Note Adjustment')],'300');
+  app.run(`exportReport('Debit Note Register');`);csv=require('csv-parse/sync').parse(app.context.exportedCSV);assert.equal(csv[1][csv[0].indexOf('Related Credit Note')],'CN-TEST');assert.equal(csv[1][csv[0].indexOf('Invoice Adjustment')],'300');
+  app.run(`state.debitNotes[0].creditNoteAmount=1200;`);assert.equal(app.run('allInvoices()[0].pending'),5200);
+  app.run(`state.debitNotes=[];`);assert.equal(app.run('allInvoices()[0].pending'),5000);
+});
+test('editors can add debit notes and later enter a CN while retaining the same DN identifier',async()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});
+  app.run(`modal=()=>{};render=()=>{};closeModal=()=>{};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>({state:JSON.parse(JSON.stringify(input.state)),revision:2});openDebit();`);
+  app.element('dnId').value='DN-FORM';app.element('dnCustomer').value=initial.invoices[0].customer;app.element('dnCustomerCode').value='BUYER-CODE';app.element('dnDate').value='2026-11-11';app.element('dnAmount').value='1000';app.element('dnInvoice').value=initial.invoices[0].id;app.element('dnType').value='EPC';
+  await app.element('saveDebit').onclick();assert.equal(app.run('state.debitNotes[0].status'),'Unsettled');assert.equal(app.run('state.debitNotes[0].customerCode'),'BUYER-CODE');
+  app.run(`openDebit('DN-FORM');`);assert.equal(app.element('dnId').disabled,true);app.element('dnCreditNote').value='CN-FORM';app.element('dnCreditAmount').value='700';await app.element('saveDebit').onclick();assert.equal(app.run('state.debitNotes[0].status'),'Settled');assert.equal(app.run('window.ReconcileIQBank.debitNote(state.debitNotes[0]).difference'),300);assert.equal(app.run("state.debitNotes.filter(x=>x.id==='DN-FORM').length"),1);
+  app.run(`openDebit('DN-FORM');window.workspaceAPI=async()=>{throw Error('Unable to save CN')};`);app.element('dnCreditAmount').value='800';await app.element('saveDebit').onclick();assert.equal(app.element('dnCreditAmount').value,'800');assert.equal(app.element('debitError').textContent,'Unable to save CN');assert.equal(app.run('state.debitNotes[0].creditNoteAmount'),700);
+});
+
 test('opening receivables use original due dates and share same-buyer payment allocation without changing sales credit terms',()=>{
   const app=workspace();app.run(`state={invoices:[],advice:[],bank:[],returns:[],priceReturns:[],debitNotes:[],logs:[],buyerGroups:[],customerTerms:[{customer:'Acme',creditDays:90}]};
     state.invoices.push(openingBalanceRecord({customer:'acme',amount:1000,date:today,dueDate:'2020-01-01',reference:'OLD-TEST',remarks:'Carried forward'},'OB-TEST'));

@@ -20,6 +20,10 @@
     });
   }
   function synchronize(state){for(const row of rows(state)){state.bank[row.originalIndex].status=row.status;if(row.advice || Object.hasOwn(state.bank[row.originalIndex],'advice'))state.bank[row.originalIndex].advice=row.advice;}return state;}
-  const api={rows,synchronize};
+  function debitNote(row){
+    const workflow=row.settlementMode==='creditNote',hasCredit=!!String(row.creditNoteNumber || '').trim();
+    return {status:hasCredit?'Settled':'Unsettled',difference:workflow?(cents(row.amount)-cents(row.creditNoteAmount))/100:0};
+  }
+  const api={rows,synchronize,debitNote};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ReconcileIQBank=api;
 })(typeof window==='undefined'?globalThis:window);

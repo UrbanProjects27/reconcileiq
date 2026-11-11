@@ -12,6 +12,13 @@ test('sales imports never treat an opening balance as a sales invoice with the s
   const current=emptyState();current.invoices=[{id:'INV-001',recordType:'openingBalance',customer:'Acme',date:'2026-11-03',openingDueDate:'2026-03-01',amount:100000.5}];
   const result=prepareImport(invoiceInput(),current);assert.equal(result.canImport,false);assert.match(result.errors[0].message,/opening balance/);assert.equal(current.invoices[0].recordType,'openingBalance');
 });
+test('debit-note imports carry customer codes and credit notes, derive status and validate amounts',()=>{
+  const current=emptyState();current.invoices=[{id:'I-CN',customer:'Buyer',date:'2026-11-01',amount:5000}];
+  const input={type:'debitNotes',mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5,customerCode:6,creditNoteNumber:7,creditNoteAmount:8},startRow:2,rows:[['DN-CN','Buyer','2026-11-11',1000,'I-CN','EPC','C001','CN-001',700]]};
+  const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.debitNotes[0].status,'Settled');assert.equal(result.state.debitNotes[0].customerCode,'C001');assert.equal(require('./finance').debitNote(result.state.debitNotes[0]).difference,300);
+  for(const patch of [{creditNoteAmount:-1},{creditNoteNumber:'',creditNoteAmount:100},{creditNoteAmount:undefined}]){const invalid=structuredClone(result.state);Object.assign(invalid.debitNotes[0],patch);assert.throws(()=>require('./lib/state').validateState(invalid));}
+  assert.equal(prepareImport(input,result.state).counts.skipped,1);
+});
 test('invalid rows block the complete batch and report source rows',()=>{
   const rows=[['INV-1','Acme','03/11/2026',100],['INV-2','Acme','31/02/2026',200],['INV-3','Acme','03/11/2026',-1],['INV-4','<script>','03/11/2026',50]];
   const result=prepareImport(invoiceInput(rows),emptyState());assert.equal(result.canImport,false);assert.equal(result.state,undefined);assert.deepEqual(result.errors.map(e=>e.row),[3,4,5]);
@@ -112,10 +119,10 @@ test('EPC advice imports normalize type and preserve the actual bank cash amount
   const current=emptyState();current.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:1000}];current.bank=[{ref:'U',customer:'Buyer',date:'2026-11-02',amount:900,status:'matched'}];
   const input={type:'advice',rows:[['Buyer','I','epc',100,'EPC deduction','U']],mapping:{customer:0,invoice:1,type:2,amount:3,description:4,utr:5},startRow:2};const result=prepareImport(input,current);assert.equal(result.canImport,true);assert.equal(result.state.advice[0].type,'EPC');assert.equal(result.state.advice[0].amount,100);assert.equal(result.state.bank[0].amount,900);assert.equal(prepareImport(input,result.state).counts.skipped,1);
 });
-test('EPC debit notes import as audit records without changing invoice or payment amounts',()=>{
+test('EPC debit notes import with unsettled CN workflow without rewriting invoice or payment records',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
   const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);
-  assert.equal(result.canImport,true);assert.equal(result.state.debitNotes[0].type,'EPC');assert.equal(result.state.debitNotes[0].status,'Unmapped');assert.deepEqual(result.state.invoices,current.invoices);assert.deepEqual(result.state.advice,current.advice);
+  assert.equal(result.canImport,true);assert.equal(result.state.debitNotes[0].type,'EPC');assert.equal(result.state.debitNotes[0].status,'Unsettled');assert.equal(require('./finance').debitNote(result.state.debitNotes[0]).difference,25);assert.deepEqual(result.state.invoices,current.invoices);assert.deepEqual(result.state.advice,current.advice);
 });
 test('CSV parsing handles BOM, quoted commas and empty columns, and rejects unsupported or oversized files',async()=>{
   const result=await parseWorkbook('invoices.csv',Buffer.from('\ufeffInvoice,Customer,Date,Amount\r\nINV-1,"Acme, Ltd",2026-11-03,"1,000.50"\r\n'));

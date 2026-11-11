@@ -71,6 +71,17 @@ integrationTest('editors can import advice and debit notes but cannot import oth
   assert.equal((await request('/api/import/preview','POST',advice,editor)).status,403);assert.equal((await request('/api/import-jobs','GET',undefined,editor)).status,403);
   assert.equal((await db.query('SELECT revision FROM workspace WHERE id=1'))[0].revision,2);
 });
+integrationTest('DN CN workflow persists editor updates, derives settlement and blocks cross-buyer invoice links',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login(),state=emptyState();state.invoices=[{id:'I-DN',customer:'Buyer',date:'2026-11-01',amount:5000},{id:'I-OTHER',customer:'Other',date:'2026-11-01',amount:5000}];
+  assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const user=await createUser(db,{email:'dn-editor@example.com',name:'Editor',password,role:'editor',mustChange:false}),editor=await login(user.email);
+  const draft=(await request('/api/state','GET',undefined,editor)).body;draft.state.debitNotes.push({id:'DN-NEW',customer:'Buyer',customerCode:'C001',date:'2026-11-11',invoice:'I-DN',amount:1000,type:'EPC',settlementMode:'creditNote',creditNoteNumber:'',creditNoteAmount:0,status:'Settled'});
+  const created=await request('/api/state','PUT',draft,editor);assert.equal(created.status,200);assert.equal(created.body.state.debitNotes[0].status,'Unsettled');assert.equal(require('./finance').debitNote(created.body.state.debitNotes[0]).difference,1000);
+  const cn=structuredClone(created.body);cn.state.debitNotes[0].creditNoteNumber='CN-NEW';cn.state.debitNotes[0].creditNoteAmount=700;cn.state.debitNotes[0].status='Unsettled';const saved=await request('/api/state','PUT',cn,editor);assert.equal(saved.status,200);assert.equal(saved.body.state.debitNotes[0].status,'Settled');assert.equal(require('./finance').debitNote(saved.body.state.debitNotes[0]).difference,300);
+  const foreign=structuredClone(saved.body);foreign.state.debitNotes[0].invoice='I-OTHER';assert.equal((await request('/api/state','PUT',foreign,editor)).status,400);
+  assert.equal((await request('/api/records/delete','POST',{collection:'debitNotes',index:0,identifier:'DN-NEW',revision:saved.body.revision},editor)).status,403);
+});
+
 integrationTest('customer opening balances persist, allocate partially, enforce buyer scope and retain admin-only deletion',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine),admin=await login();const state=emptyState();
   state.invoices=[{id:'OB-TEST',recordType:'openingBalance',customer:'Alpha',date:'2026-04-01',openingDueDate:'2026-03-01',openingReference:'Earlier dues',amount:1000}];
