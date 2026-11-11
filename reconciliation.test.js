@@ -33,6 +33,21 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('brand claims expose bulk import, map template columns and keep automatic sync disabled for claim imports',()=>{
+  const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor',buyerGroupIds:null}});app.context.claimDefinitions=require('./lib/import').definitions.brandClaims;
+  assert.ok(app.run('renderBrandClaims()').includes('data-action="bulk-import-brand-claims"'));app.run(`window.claimMapping=suggestImportColumns(claimDefinitions.fields,registerImportTemplates.brandClaims,'brandClaims');`);
+  for(const field of app.context.claimDefinitions.fields.filter(field=>field.required))assert.equal(typeof app.run('window.claimMapping')[field.key],'number',field.key);
+  app.run(`modal=(title,subtitle,body,footer)=>{window.claimImportMarkup=body+footer;return {querySelector:s=>document.getElementById(s.slice(1))};};openRegisterBulkImport('brandClaims');`);assert.ok(app.run('window.claimImportMarkup').includes('claimLocalCsv'));assert.ok(app.run('window.claimImportMarkup').includes('claimOneDriveImport'));
+  app.run(`sharedSession.user.buyerGroupIds=['GROUP'];openRegisterBulkImport('brandClaims');`);assert.ok(app.run('window.claimImportMarkup').includes('scopedImportFile'));
+});
+test('debit-note customer dropdown filters invoices and requires every non-CN field',async()=>{
+  const app=workspace();app.run(`modal=(title,subtitle,body)=>{window.debitMarkup=body;};state.invoices=[{id:'A1',customer:'Alpha',code:'CA',date:today,amount:1000},{id:'B1',customer:'Beta',code:'CB',date:today,amount:1000}];state.customerTerms=[];state.debitNotes=[];openDebit();`);
+  assert.ok(app.run('window.debitMarkup').includes('<select id="dnCustomer" required>'));assert.equal(app.element('dnInvoice').disabled,true);assert.ok(!app.element('dnInvoice').innerHTML.includes('A1'));
+  app.element('dnCustomer').value='Alpha';app.element('dnCustomer').onchange();assert.ok(app.element('dnInvoice').innerHTML.includes('A1'));assert.ok(!app.element('dnInvoice').innerHTML.includes('B1'));assert.equal(app.element('dnCustomerCode').value,'CA');
+  app.element('dnInvoice').value='A1';app.element('dnCustomer').value='Beta';app.element('dnCustomer').onchange();assert.equal(app.element('dnInvoice').value,'');assert.ok(!app.element('dnInvoice').innerHTML.includes('A1'));
+  app.element('dnId').value='DN-REQ';app.element('dnDate').value='2026-11-11';app.element('dnAmount').value='100';app.element('dnType').value='EPC';await app.element('saveDebit').onclick();assert.equal(app.run('state.debitNotes.length'),0);assert.match(app.element('debitError').textContent,/original invoice/);
+});
+
 test('brand claims calculate net, brand due dates and inclusive settlement boundaries without changing invoice balances',()=>{
   const app=workspace();app.run(`state.brandTerms=[{brand:'Brand A',creditDays:30}];window.claimInput={relatedMonth:'2026-10',brand:'Brand A',customer:'Buyer',claimType:'Promotion',receivedDate:'2026-10-31',buyerDocument:'DN-CLAIM',buyerDNAmount:'1000',buyerCNNumber:'CANCEL',buyerCNAmount:'100',relatedCNNumber:'',relatedCNDate:'',relatedCNAmount:''};`);
   const initial=app.run('totals().pending');app.run(`state.brandClaims=[claimFormRecord(window.claimInput,'CLM-TEST')];`);assert.equal(app.run('brandClaimRows()[0].netAmount'),900);assert.equal(app.run('brandClaimRows()[0].dueDate'),'2026-11-30');assert.equal(app.run('brandClaimRows()[0].status'),'Unsettled');assert.equal(app.run('totals().pending'),initial);

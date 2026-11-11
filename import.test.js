@@ -19,6 +19,14 @@ test('debit-note imports carry customer codes and credit notes, derive status an
   for(const patch of [{creditNoteAmount:-1},{creditNoteNumber:'',creditNoteAmount:100},{creditNoteAmount:undefined}]){const invalid=structuredClone(result.state);Object.assign(invalid.debitNotes[0],patch);assert.throws(()=>require('./lib/state').validateState(invalid));}
   assert.equal(prepareImport(input,result.state).counts.skipped,1);
 });
+test('brand-claim imports compute dates, balances and stable identities, skip manual duplicates and reject incomplete CNs',()=>{
+  const current=emptyState();current.brandTerms=[{brand:'A',creditDays:30}];
+  const input={type:'brandClaims',mapping:{relatedMonth:0,brand:1,customer:2,claimType:3,receivedDate:4,buyerDocument:5,buyerDNAmount:6,buyerCNNumber:7,buyerCNAmount:8,relatedCNDate:9,relatedCNNumber:10,relatedCNAmount:11},rows:[['11/2026','A','Buyer','Promotion','2026-11-01','DN-CLAIM',1000,'CANCEL',100,'2026-11-11','CN-BRAND',895]],startRow:2,dateFormat:'iso'};
+  const result=prepareImport(input,current);assert.equal(result.canImport,true,JSON.stringify(result.errors));const row=result.state.brandClaims[0];assert.equal(row.relatedMonth,'2026-11');assert.equal(row.netAmount,900);assert.equal(row.pendingAmount,5);assert.equal(row.status,'Settled');assert.equal(row.dueDate,'2026-12-01');assert.equal(prepareImport(input,result.state).counts.skipped,1);
+  const manual=structuredClone(result.state);manual.brandClaims[0].id='CLM-MANUAL';assert.equal(prepareImport(input,manual).counts.skipped,1);
+  const conflict=structuredClone(input);conflict.rows[0][6]=1200;assert.equal(prepareImport(conflict,result.state).canImport,false);
+  const invalid=structuredClone(input);invalid.rows[0][11]='';assert.equal(prepareImport(invalid,current).canImport,false);assert.equal(prepareImport(invalid,current).errors[0].row,2);
+});
 test('invalid rows block the complete batch and report source rows',()=>{
   const rows=[['INV-1','Acme','03/11/2026',100],['INV-2','Acme','31/02/2026',200],['INV-3','Acme','03/11/2026',-1],['INV-4','<script>','03/11/2026',50]];
   const result=prepareImport(invoiceInput(rows),emptyState());assert.equal(result.canImport,false);assert.equal(result.state,undefined);assert.deepEqual(result.errors.map(e=>e.row),[3,4,5]);
@@ -121,7 +129,7 @@ test('EPC advice imports normalize type and preserve the actual bank cash amount
 });
 test('EPC debit notes import with unsettled CN workflow without rewriting invoice or payment records',()=>{
   const current=prepareImport(invoiceInput(),emptyState()).state;
-  const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'},current);
+  const result=prepareImport({type:'debitNotes',rows:[['DN-EPC','Acme','2026-11-03',25,'INV-001','epc','C001']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5,customerCode:6},startRow:2,dateFormat:'iso'},current);
   assert.equal(result.canImport,true);assert.equal(result.state.debitNotes[0].type,'EPC');assert.equal(result.state.debitNotes[0].status,'Unsettled');assert.equal(require('./finance').debitNote(result.state.debitNotes[0]).difference,25);assert.deepEqual(result.state.invoices,current.invoices);assert.deepEqual(result.state.advice,current.advice);
 });
 test('CSV parsing handles BOM, quoted commas and empty columns, and rejects unsupported or oversized files',async()=>{

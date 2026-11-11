@@ -59,7 +59,7 @@ integrationTest('editors can import advice and debit notes but cannot import oth
   const preview=await request('/api/import/preview','POST',advice,editor);assert.equal(preview.status,200);assert.equal(preview.body.canImport,true);
   assert.equal((await request('/api/import','POST',{...advice,revision:0},editor,{'X-CSRF-Token':'bad'})).status,403);
   assert.equal((await request('/api/import','POST',{...advice,revision:0},editor)).status,200);
-  const debit={type:'debitNotes',rows:[['D','Buyer','2026-11-03',25,'I','EPC']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5},startRow:2,dateFormat:'iso'};
+  const debit={type:'debitNotes',rows:[['D','Buyer','2026-11-03',25,'I','EPC','C001']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5,customerCode:6},startRow:2,dateFormat:'iso'};
   assert.equal((await request('/api/import/preview','POST',debit,editor)).status,200);assert.equal((await request('/api/import','POST',{...debit,revision:1},editor)).status,200);
   for(const type of ['invoices','bank','returns','customerTerms']){
     assert.equal((await request('/api/import/preview','POST',{...debit,type},editor)).status,403);
@@ -88,6 +88,15 @@ integrationTest('brand claims and attachments save atomically, enforce customer 
   assert.equal((await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},editor)).status,403);
   const deleted=await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},admin);assert.equal(deleted.status,200,JSON.stringify(deleted.body));assert.equal((await db.query('SELECT claim_id FROM claim_attachments')).length,0);
 });
+integrationTest('editors bulk import brand claims only within assigned customers',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login(),state=emptyState();state.buyerGroups=[{id:'G-BULK',name:'Assigned',customers:['Buyer']}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const user=await createUser(db,{email:'claim-bulk-editor@example.com',name:'Editor',password,role:'editor',mustChange:false,buyerGroupIds:['G-BULK']}),editor=await login(user.email);
+  assert.ok((await request('/api/import/definitions','GET',undefined,editor)).body.definitions.brandClaims);
+  const input={type:'brandClaims',mapping:{relatedMonth:0,brand:1,customer:2,claimType:3,receivedDate:4,buyerDocument:5,buyerDNAmount:6},rows:[['2026-11','Brand','Buyer','Fee','2026-11-11','DN-BULK',1000]],startRow:2,dateFormat:'iso'};
+  assert.equal((await request('/api/import/preview','POST',input,editor)).body.canImport,true);const saved=await request('/api/import','POST',{...input,revision:1},editor);assert.equal(saved.status,200,JSON.stringify(saved.body));assert.equal(saved.body.state.brandClaims[0].status,'Unsettled');assert.equal(saved.body.state.brandClaims[0].pendingAmount,1000);
+  assert.equal((await request('/api/import/preview','POST',input,editor)).body.counts.skipped,1);input.rows[0][2]='Other';assert.equal((await request('/api/import/preview','POST',input,editor)).status,403);
+  await db.query('UPDATE app_users SET role=$1 WHERE id=$2',['viewer',user.id]);assert.equal((await request('/api/import','POST',{...input,revision:2},editor)).status,403);
+});
 test('claim validation checks months, dates and paired CN fields; attachment validation checks content and limits',()=>{
   const state=emptyState();state.brandClaims=[{id:'C',relatedMonth:'2026-10',brand:'A',customer:'Buyer',claimType:'Fee',receivedDate:'2026-11-01',buyerDocument:'DN',buyerDNAmount:100}];assert.equal(validateState(state).brandClaims[0].status,'Unsettled');
   for(const patch of [{relatedMonth:'2026-13'},{receivedDate:'2026-02-31'},{relatedCNNumber:'CN'},{relatedCNAmount:1},{buyerCNAmount:1},{buyerDNAmount:-1}]){const invalid=structuredClone(state);Object.assign(invalid.brandClaims[0],patch);assert.throws(()=>validateState(invalid));}
@@ -99,6 +108,7 @@ integrationTest('DN CN workflow persists editor updates, derives settlement and 
   assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
   const user=await createUser(db,{email:'dn-editor@example.com',name:'Editor',password,role:'editor',mustChange:false}),editor=await login(user.email);
   const draft=(await request('/api/state','GET',undefined,editor)).body;draft.state.debitNotes.push({id:'DN-NEW',customer:'Buyer',customerCode:'C001',date:'2026-11-11',invoice:'I-DN',amount:1000,type:'EPC',settlementMode:'creditNote',creditNoteNumber:'',creditNoteAmount:0,status:'Settled'});
+  for(const field of ['customerCode','invoice','type']){const missing=structuredClone(draft);delete missing.state.debitNotes[0][field];assert.equal((await request('/api/state','PUT',missing,editor)).status,400);}
   const created=await request('/api/state','PUT',draft,editor);assert.equal(created.status,200);assert.equal(created.body.state.debitNotes[0].status,'Unsettled');assert.equal(require('./finance').debitNote(created.body.state.debitNotes[0]).difference,1000);
   const cn=structuredClone(created.body);cn.state.debitNotes[0].creditNoteNumber='CN-NEW';cn.state.debitNotes[0].creditNoteAmount=700;cn.state.debitNotes[0].status='Unsettled';const saved=await request('/api/state','PUT',cn,editor);assert.equal(saved.status,200);assert.equal(saved.body.state.debitNotes[0].status,'Settled');assert.equal(require('./finance').debitNote(saved.body.state.debitNotes[0]).difference,300);
   const foreign=structuredClone(saved.body);foreign.state.debitNotes[0].invoice='I-OTHER';assert.equal((await request('/api/state','PUT',foreign,editor)).status,400);
@@ -156,8 +166,8 @@ integrationTest('buyer-group assignments limit reads, writes and imports, preser
   const expanded=structuredClone(saved.body.state);expanded.buyerGroups[0].customers.push('Other');assert.equal((await request('/api/state','PUT',{state:expanded,revision:2},scoped)).status,403);
   for(const route of ['/api/onedrive/files','/api/import-jobs','/api/backup','/api/users'])assert.equal((await request(route,'GET',undefined,scoped)).status,403);
   const csv=Buffer.from('Customer name,Invoice number,Transaction type,Amount,Transaction description,UTR\nAlpha,I0,Payment,10,Receipt,UI0').toString('base64');assert.equal((await request('/api/import/file','POST',{name:'advice.csv',data:csv},scoped)).status,200);
-  const debit={type:'debitNotes',mapping:{id:0,customer:1,date:2,amount:3,type:4},rows:[['D','Other','2026-11-04',10,'EPC']],startRow:2,dateFormat:'iso'};
-  assert.equal((await request('/api/import/preview','POST',debit,scoped)).status,403);debit.rows[0][1]='Alpha';assert.equal((await request('/api/import/preview','POST',debit,scoped)).status,200);
+  const debit={type:'debitNotes',mapping:{id:0,customer:1,date:2,amount:3,type:4,invoice:5,customerCode:6},rows:[['D','Other','2026-11-04',10,'EPC','I2','C001']],startRow:2,dateFormat:'iso'};
+  assert.equal((await request('/api/import/preview','POST',debit,scoped)).body.canImport,false);debit.rows[0][1]='Alpha';debit.rows[0][5]='I0';assert.equal((await request('/api/import/preview','POST',debit,scoped)).status,200);
   const imported=await request('/api/import','POST',{...debit,revision:2},scoped);assert.equal(imported.status,200);assert.ok(!JSON.stringify(imported.body.state).includes('Other'));
   assert.equal((await request(`/api/users/${user.id}`,'PATCH',{buyerGroupIds:['MISSING']},admin)).status,400);
   assert.equal((await request(`/api/users/${user.id}`,'PATCH',{buyerGroupIds:['G1','G2']},admin)).status,200);assert.equal((await request('/api/state','GET',undefined,scoped)).status,401);
@@ -237,6 +247,8 @@ integrationTest('only admins delete entries, including through whole-workspace s
   const {request,login,db}=await fixture(t,engine);const admin=await login();
   await createUser(db,{email:'delete-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});await createUser(db,{email:'delete-viewer@example.com',name:'Viewer',password,role:'viewer',mustChange:false});const editor=await login('delete-editor@example.com'),viewer=await login('delete-viewer@example.com');
   const state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'unmatched'}];state.debitNotes=[{id:'D',customer:'Buyer',date:'2026-11-01',amount:10,type:'EPC',status:'Unmapped'}];
+  // Existing unlinked audit notes remain readable/deletable after stricter entry rules.
+  await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
   const saved=await request('/api/state','PUT',{state,revision:0},admin);assert.equal(saved.status,200);
   for(const [collection,identifier] of [['invoices','I'],['bank','U'],['debitNotes','D']]){
     for(const user of [editor,viewer])assert.equal((await request('/api/records/delete','POST',{collection,index:0,identifier,revision:1},user)).status,403);
@@ -250,7 +262,7 @@ integrationTest('only admins delete entries, including through whole-workspace s
   const snapshot=await db.query('SELECT data FROM workspace_snapshots WHERE revision=2');assert.equal(JSON.parse(snapshot[0].data).invoices[0].id,'I');
 });
 integrationTest('linked entries must be removed first and deleted payment allocations reopen bank receipts',async(t,engine)=>{
-  const {request,login,db}=await fixture(t,engine);const admin=await login(),state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'matched',advice:'A'}];state.advice=[{id:'A',customer:'Buyer',date:'2026-11-01',amount:100,invoice:'I',utr:'U',type:'Payment',description:'Receipt'}];state.returns=[{id:'R',customer:'Buyer',date:'2026-11-01',amount:10,invoice:'I',type:'Qty return'}];state.priceReturns=[{id:'P',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',type:'Price return'}];state.debitNotes=[{id:'D',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',type:'EPC',status:'Unmapped'}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
+  const {request,login,db}=await fixture(t,engine);const admin=await login(),state=emptyState();state.invoices=[{id:'I',customer:'Buyer',date:'2026-11-01',amount:100}];state.bank=[{ref:'U',customer:'Buyer',date:'2026-11-01',amount:100,status:'matched',advice:'A'}];state.advice=[{id:'A',customer:'Buyer',date:'2026-11-01',amount:100,invoice:'I',utr:'U',type:'Payment',description:'Receipt'}];state.returns=[{id:'R',customer:'Buyer',date:'2026-11-01',amount:10,invoice:'I',type:'Qty return'}];state.priceReturns=[{id:'P',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',type:'Price return'}];state.debitNotes=[{id:'D',customer:'Buyer',date:'2026-11-01',amount:5,invoice:'I',customerCode:'C001',type:'EPC',status:'Unmapped'}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
   for(const [collection,identifier] of [['invoices','I'],['bank','U']]){const linked=await request('/api/records/delete','POST',{collection,index:0,identifier,revision:1},admin);assert.equal(linked.status,409);assert.match(linked.body.error,/linked/);}
   assert.equal((await request('/api/records/delete','POST',{collection:'bank',index:0,identifier:'OTHER',revision:1},admin)).status,409);
   assert.equal((await request('/api/records/delete','POST',{collection:'unsupported',index:0,identifier:'I',revision:1},admin)).status,400);

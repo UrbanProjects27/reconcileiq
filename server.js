@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomBytes, randomUUID } = require('node:crypto');
 const { openDatabase } = require('./lib/database');
-const { emptyState, validateState, validateBankCustomers, validateAdviceFields, validateReturnFields } = require('./lib/state');
+const { emptyState, validateState, validateBankCustomers, validateAdviceFields, validateReturnFields, validateDebitFields } = require('./lib/state');
 const { digest, publicUser, hashPassword, verifyPassword, createUser } = require('./lib/auth');
 const { createOneDrive, callbackPath } = require('./lib/onedrive');
 const {definitions:importDefinitions,prepareImport} = require('./lib/import');
@@ -164,7 +164,7 @@ async function createApplication(options = {}) {
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
       const importer=()=>{if(!['admin','editor'].includes(session.role))fail(403,'Administrator or editor access required.');};
-      const importAccess=(role,type)=>{if(role!=='admin' && !(role==='editor' && ['advice','debitNotes'].includes(type)))fail(403,'Editors can bulk import payment advice and debit notes only.');};
+      const importAccess=(role,type)=>{if(role!=='admin' && !(role==='editor' && ['advice','debitNotes','brandClaims'].includes(type)))fail(403,'Editors can bulk import payment advice, debit notes and brand claims only.');};
       if(route==='/api/password-reset/requests' && method==='GET'){admin();return json(response,200,await passwordReset.requests());}
       const resetAction=route.match(/^\/api\/users\/([^/]+)\/(reset-link|reset-password)$/);
       if(resetAction && method==='POST'){
@@ -214,7 +214,7 @@ async function createApplication(options = {}) {
         const bytes=Buffer.from(input.data,'base64');if(bytes.length>2*1024*1024)fail(400,'Use a CSV file up to 2 MB. Split larger files before importing.');
         return json(response,200,await require('./lib/workbook').parseWorkbook('upload.csv',bytes));
       }
-      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:!customerAccess.restricted(session)?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes}});}
+      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:!customerAccess.restricted(session)?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes,brandClaims:importDefinitions.brandClaims}});}
       if (route === '/api/import/preview' && method === 'POST') {
         importer();const raw=await body(request);importAccess(session.role,raw.type);if(raw.jobId)customerAccess.requireSharedFileAccess(session);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,customerAccess.filterState(current.state,session));
         if(unused)customerAccess.assertImportScope(unused,session,current.state);
@@ -261,7 +261,7 @@ async function createApplication(options = {}) {
           const keptClaimIds=new Set((next.brandClaims || []).map(row=>row.id));
           for(const oldClaim of before.brandClaims || [])if(!keptClaimIds.has(oldClaim.id))await query('DELETE FROM claim_attachments WHERE claim_id=$1',[oldClaim.id]);
           if(!['/api/restore','/api/records/delete'].includes(route)){
-            validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);
+            validateBankCustomers(next,before);validateAdviceFields(next,before);validateReturnFields(next,before);validateDebitFields(next,before);
           }
           const encoded=encodeState(next);
           const updated = await query('UPDATE workspace SET data=$1,revision=revision+1 WHERE id=1 AND revision=$2 RETURNING revision',[encoded,input.revision]);
