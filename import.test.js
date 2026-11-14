@@ -27,6 +27,16 @@ test('brand-claim imports compute dates, balances and stable identities, skip ma
   const conflict=structuredClone(input);conflict.rows[0][6]=1200;assert.equal(prepareImport(conflict,result.state).canImport,false);
   const invalid=structuredClone(input);invalid.rows[0][11]='';assert.equal(prepareImport(invalid,current).canImport,false);assert.equal(prepareImport(invalid,current).errors[0].row,2);
 });
+test('vendor imports keep vendor document identities and preserve user GRN/CN fields during Excel updates',()=>{
+  for(const type of ['vendorSales','vendorRTV']){
+    const input={type,mapping:{vendor:0,date:1,number:2,amount:3},rows:[['Vendor A','2026-11-01','0000123',1000]],startRow:2,dateFormat:'iso'};
+    const result=prepareImport(input,emptyState());assert.equal(result.canImport,true,JSON.stringify(result.errors));const row=result.state[type][0];assert.equal(row.number,'0000123');assert.equal(row.difference,1000);assert.equal(row.status,'Unsettled');assert.equal(prepareImport(input,result.state).counts.skipped,1);
+    Object.assign(row,{matchDate:'2026-11-14',matchNumber:'USER-MATCH',matchAmount:995});const changed=structuredClone(input);changed.rows[0][3]=1100;
+    const updated=prepareImport(changed,result.state,{reviewConflicts:true});assert.equal(updated.counts.updated,1);assert.equal(updated.state[type][0].id,row.id);assert.equal(updated.state[type][0].matchAmount,995);assert.equal(updated.state[type][0].matchNumber,'USER-MATCH');assert.equal(updated.state[type][0].difference,105);assert.equal(updated.state[type][0].status,'Unsettled');
+    const both=structuredClone(input);both.rows.push(['Vendor B','2026-11-01','0000123',2000]);assert.equal(prepareImport(both,emptyState()).counts.added,2);
+    const conflict=structuredClone(input);conflict.rows.push(['Vendor A','2026-11-01','0000123',1200]);assert.equal(prepareImport(conflict,emptyState()).canImport,false);
+  }
+});
 test('invalid rows block the complete batch and report source rows',()=>{
   const rows=[['INV-1','Acme','03/11/2026',100],['INV-2','Acme','31/02/2026',200],['INV-3','Acme','03/11/2026',-1],['INV-4','<script>','03/11/2026',50]];
   const result=prepareImport(invoiceInput(rows),emptyState());assert.equal(result.canImport,false);assert.equal(result.state,undefined);assert.deepEqual(result.errors.map(e=>e.row),[3,4,5]);

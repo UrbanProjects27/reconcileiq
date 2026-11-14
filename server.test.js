@@ -88,6 +88,16 @@ integrationTest('brand claims and attachments save atomically, enforce customer 
   assert.equal((await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},editor)).status,403);
   const deleted=await request('/api/records/delete','POST',{collection:'brandClaims',index:1,identifier:'CLM-OWN',revision:4},admin);assert.equal(deleted.status,200,JSON.stringify(deleted.body));assert.equal((await db.query('SELECT claim_id FROM claim_attachments')).length,0);
 });
+integrationTest('vendor ledgers are shared with editors independently of buyer scope and only user matching fields are editable',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login();const user=await createUser(db,{email:'vendor-editor@example.com',name:'Editor',password,role:'editor',mustChange:false,buyerGroupIds:[]}),editor=await login(user.email);
+  const input={type:'vendorSales',mapping:{vendor:0,date:1,number:2,amount:3},rows:[['Vendor A','2026-11-01','INV-V',1000]],startRow:2,dateFormat:'iso'};
+  const created=await request('/api/import','POST',{...input,revision:0},editor);assert.equal(created.status,200,JSON.stringify(created.body));assert.equal(created.body.state.vendorSales.length,1);
+  const matched=structuredClone(created.body);Object.assign(matched.state.vendorSales[0],{matchDate:'2026-11-14',matchNumber:'GRN-V',matchAmount:995,status:'Unsettled'});const saved=await request('/api/state','PUT',matched,editor);assert.equal(saved.status,200);assert.equal(saved.body.state.vendorSales[0].status,'Settled');assert.equal(saved.body.state.vendorSales[0].difference,5);
+  const forged=structuredClone(saved.body);forged.state.vendorSales[0].amount=900;assert.equal((await request('/api/state','PUT',forged,editor)).status,403);
+  const oldClient=structuredClone(saved.body);delete oldClient.state.vendorSales;delete oldClient.state.vendorRTV;const kept=await request('/api/state','PUT',oldClient,editor);assert.equal(kept.status,200);assert.equal(kept.body.state.vendorSales[0].matchAmount,995);
+  input.rows[0][3]=1100;const updated=await request('/api/import','POST',{...input,revision:3},editor);assert.equal(updated.status,200);assert.equal(updated.body.state.vendorSales[0].difference,105);assert.equal(updated.body.state.vendorSales[0].matchAmount,995);
+  const id=updated.body.state.vendorSales[0].id;assert.equal((await request('/api/records/delete','POST',{collection:'vendorSales',index:0,identifier:id,revision:4},editor)).status,403);assert.equal((await request('/api/records/delete','POST',{collection:'vendorSales',index:0,identifier:id,revision:4},admin)).status,200);
+});
 integrationTest('editors bulk import brand claims only within assigned customers',async(t,engine)=>{
   const {request,login,db}=await fixture(t,engine),admin=await login(),state=emptyState();state.buyerGroups=[{id:'G-BULK',name:'Assigned',customers:['Buyer']}];assert.equal((await request('/api/state','PUT',{state,revision:0},admin)).status,200);
   const user=await createUser(db,{email:'claim-bulk-editor@example.com',name:'Editor',password,role:'editor',mustChange:false,buyerGroupIds:['G-BULK']}),editor=await login(user.email);

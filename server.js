@@ -11,7 +11,7 @@ const {createBulkImport}=require('./lib/bulk-import');
 const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
-const {requireAdminForRemovals,requireAdminForOpeningEdits,deleteRecord}=require('./lib/records');
+const {requireAdminForRemovals,requireAdminForOpeningEdits,requireVendorSourceUnchanged,deleteRecord}=require('./lib/records');
 const {validateAttachment}=require('./lib/claim-attachments');
 const customerAccess=require('./lib/customer-access');
 const {gzipSync,gunzipSync}=require('node:zlib');
@@ -164,7 +164,7 @@ async function createApplication(options = {}) {
       if (session.must_change) fail(403,'Change your temporary password before continuing.');
       const admin = () => { if (session.role !== 'admin') fail(403,'Administrator access required.'); };
       const importer=()=>{if(!['admin','editor'].includes(session.role))fail(403,'Administrator or editor access required.');};
-      const importAccess=(role,type)=>{if(role!=='admin' && !(role==='editor' && ['advice','debitNotes','brandClaims'].includes(type)))fail(403,'Editors can bulk import payment advice, debit notes and brand claims only.');};
+      const importAccess=(role,type)=>{if(role!=='admin' && !(role==='editor' && ['advice','debitNotes','brandClaims','vendorSales','vendorRTV'].includes(type)))fail(403,'Editors can bulk import payment advice, debit notes, brand claims and vendor ledger records.');};
       if(route==='/api/password-reset/requests' && method==='GET'){admin();return json(response,200,await passwordReset.requests());}
       const resetAction=route.match(/^\/api\/users\/([^/]+)\/(reset-link|reset-password)$/);
       if(resetAction && method==='POST'){
@@ -214,7 +214,7 @@ async function createApplication(options = {}) {
         const bytes=Buffer.from(input.data,'base64');if(bytes.length>2*1024*1024)fail(400,'Use a CSV file up to 2 MB. Split larger files before importing.');
         return json(response,200,await require('./lib/workbook').parseWorkbook('upload.csv',bytes));
       }
-      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:!customerAccess.restricted(session)?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes,brandClaims:importDefinitions.brandClaims}});}
+      if (route === '/api/import/definitions' && method === 'GET') {importer();return json(response,200,{definitions:!customerAccess.restricted(session)?importDefinitions:{advice:importDefinitions.advice,debitNotes:importDefinitions.debitNotes,brandClaims:importDefinitions.brandClaims,vendorSales:importDefinitions.vendorSales,vendorRTV:importDefinitions.vendorRTV}});}
       if (route === '/api/import/preview' && method === 'POST') {
         importer();const raw=await body(request);importAccess(session.role,raw.type);if(raw.jobId)customerAccess.requireSharedFileAccess(session);const input=await bulk.project(session,raw);const current=await readWorkspace(db);const {state:unused,...preview}=prepareImport(input,customerAccess.filterState(current.state,session));
         if(unused)customerAccess.assertImportScope(unused,session,current.state);
@@ -251,7 +251,7 @@ async function createApplication(options = {}) {
           // Historical backups may predate newly required fields. Their schema
           // is still validated; new-record rules apply to regular writes/imports.
           requireAdminForRemovals(before,next,actor.role);
-          requireAdminForOpeningEdits(before,next,actor.role);
+          requireAdminForOpeningEdits(before,next,actor.role);if(route==='/api/state')requireVendorSourceUnchanged(before,next);
           if(claimAttachment){
             const claim=(next.brandClaims || []).find(row=>row.id===claimAttachment.claimId);
             if(!claim || !(customerAccess.filterState(next,actor).brandClaims || []).some(row=>row.id===claim.id))fail(403,'Choose a claim within your customer access.');

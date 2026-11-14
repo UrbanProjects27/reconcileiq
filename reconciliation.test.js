@@ -33,6 +33,16 @@ function workspace(saved, shared) {
   return { context, element, storage, run: code => vm.runInContext(code, context) };
 }
 
+test('vendor ledger settles inclusive ten-rupee differences and preserves matching drafts on a failed save',async()=>{
+  const initial=workspace().run('clone(seed)');initial.vendorSales=[{id:'VS-TEST',vendor:'Vendor A',date:'2026-11-01',number:'INV-VENDOR',amount:1000}];initial.vendorRTV=[];const app=workspace(undefined,{state:initial,revision:1,user:{role:'editor',buyerGroupIds:[]}});
+  for(const [amount,status] of [[990,'Settled'],[1010,'Settled'],[989.99,'Unsettled'],[1010.01,'Unsettled']]){app.context.testAmount=amount;assert.equal(app.run('window.ReconcileIQBank.vendorLedger({amount:1000,matchAmount:testAmount}).status'),status);}
+  const pending=app.run('totals().pending');app.run(`modal=()=>{};render=()=>{};closeModal=()=>{};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>({state:JSON.parse(JSON.stringify(input.state)),revision:2});openVendorMatch('vendorSales','VS-TEST');`);
+  app.element('vendorMatchDate').value='2026-11-14';app.element('vendorMatchNumber').value='GRN-TEST';app.element('vendorMatchAmount').value='995';await app.element('saveVendorMatch').onclick();assert.equal(app.run('state.vendorSales[0].status'),'Settled');assert.equal(app.run('state.vendorSales[0].difference'),5);assert.equal(app.run('totals().pending'),pending);
+  app.run(`openVendorMatch('vendorSales','VS-TEST');window.workspaceAPI=async()=>{throw Error('Vendor save failed')};`);app.element('vendorMatchAmount').value='900';await app.element('saveVendorMatch').onclick();assert.equal(app.element('vendorMatchAmount').value,'900');assert.equal(app.element('vendorMatchError').textContent,'Vendor save failed');assert.equal(app.run('state.vendorSales[0].matchAmount'),995);
+  app.run(`exportVendorLedger();`);assert.ok(app.context.exportedCSV.includes('GRN-TEST'));assert.ok(app.context.exportedCSV.includes('Settled'));
+  assert.ok(app.run('renderVendorLedger()').includes('Urban RTV DN'));app.run(`currentView='vendorledger'`);assert.equal(app.run('customerScopeMarkup()'),'');
+});
+
 test('brand claims expose bulk import, map template columns and keep automatic sync disabled for claim imports',()=>{
   const initial=workspace().run('clone(seed)'),app=workspace(undefined,{state:initial,revision:1,user:{role:'editor',buyerGroupIds:null}});app.context.claimDefinitions=require('./lib/import').definitions.brandClaims;
   assert.ok(app.run('renderBrandClaims()').includes('data-action="bulk-import-brand-claims"'));app.run(`window.claimMapping=suggestImportColumns(claimDefinitions.fields,registerImportTemplates.brandClaims,'brandClaims');`);

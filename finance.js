@@ -31,6 +31,7 @@
     const hasCN=!!String(row.relatedCNNumber || '').trim() && !!row.relatedCNDate;
     return {netAmount:net/100,pendingAmount:pending/100,dueDate:due.toISOString().slice(0,10),brandCreditDays:creditDays,status:!hasCN?'Unsettled':Math.abs(pending)<=1000?'Settled':'Pending'};
   }
-  const api={rows,synchronize,debitNote,claim};
+  function vendorLedger(row){const difference=(cents(row.amount)-cents(row.matchAmount))/100;return {difference,status:Math.abs(cents(difference))<=1000?'Settled':'Unsettled'};}
+  const api={rows,synchronize,debitNote,claim,vendorLedger};
   if(typeof module==='object'&&module.exports)module.exports=api;else root.ReconcileIQBank=api;
 })(typeof window==='undefined'?globalThis:window);

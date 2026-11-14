@@ -19,6 +19,20 @@ test('automatic sync signatures cannot be replayed as bulk-import signatures',()
   const id=require('node:crypto').randomUUID(),key='1'.repeat(64);assert.equal(verifyRun(id,signRun(id,key),key),true);assert.equal(verifyRun(id,require('./lib/bulk-import').signature(id,key),key),false);assert.equal(verifyRun(id,'invalid',key),false);
 });
 for(const engine of ['sqlite','postgres']){
+  test(`empty vendor mappings can be enabled and approved editor copies synchronize all vendors [${engine}]`,async t=>{
+    const f=await fixture(t,engine),headers=['Vendor Name','Urban RTV Date','Urban RTV number','Urban RTV amount'],queued=[];let contents=headers.join(',');
+    const service=createAutoSync({db:f.db,env:{ONEDRIVE_TOKEN_KEY:'1'.repeat(64)},enqueue:async id=>queued.push(id),bulk:{get:async()=>({status:'ready',file_id:'vendor-empty',info:{name:'vendor.csv',sheets:[{key:'0',name:'CSV',rows:[headers]}]}}),project:async(user,input)=>({...input,rows:[],bulk:true})},onedrive:{sourceFile:async()=>({name:'vendor.csv',cTag:'test'}),downloadTo:async(id,filename)=>fs.writeFile(filename,contents)}});
+    const saved=await service.save(f.user,{jobId:'test',sheetKey:'0',type:'vendorRTV',mapping:{vendor:0,date:1,number:2,amount:3},startRow:2,dateFormat:'iso'},'http://localhost');await service.run(queued.at(-1));assert.equal((await service.list(f.user)).sources.find(source=>source.id===saved.id).status,'success');
+    const editor=await createUser(f.db,{email:'vendor-sync-editor@example.com',name:'Vendor editor',password:'Safe-sync-test-password',role:'editor',mustChange:false,buyerGroupIds:[]});contents+='\nVendor A,2026-11-01,RTV-A,1000\nVendor B,2026-11-01,RTV-B,2000';await service.save(editor,{approvedSourceId:saved.id},'http://localhost');await service.run(queued.at(-1));assert.equal((await f.state()).vendorRTV.length,2);
+  });
+  test(`vendor sync accepts header-only sources, adds rows later and preserves GRN values on source changes [${engine}]`,async t=>{
+    const f=await fixture(t,engine),headers=['Vendor Name','Vendor Sale Invoice Date','Vendor Sale invoice number','Vendor Sale amount'];
+    const vendor={...config,type:'vendorSales',name:'vendor.csv',headers,mapping:{vendor:0,date:1,number:2,amount:3}};await f.db.query('UPDATE sync_sources SET config=$1 WHERE id=$2',[JSON.stringify(vendor),'source-test']);
+    f.change(headers.join(','),'empty-vendor');await f.run();assert.equal((await f.service.list(f.user)).sources[0].status,'success');assert.equal((await f.service.list(f.user)).runs[0].summary.counts.added,0);
+    f.change(headers.join(',')+'\nVendor A,2026-11-01,V-1,1000','new-vendor');await f.run();let state=await f.state();assert.equal(state.vendorSales.length,1);
+    Object.assign(state.vendorSales[0],{matchDate:'2026-11-14',matchNumber:'GRN-1',matchAmount:995});await f.db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(state)]);
+    f.change(headers.join(',')+'\nVendor A,2026-11-01,V-1,1100','changed-vendor');await f.run();state=await f.state();assert.equal(state.vendorSales[0].matchAmount,995);assert.equal(state.vendorSales[0].difference,105);assert.equal((await f.service.list(f.user)).runs[0].summary.counts.updated,1);
+  });
   test(`editors manage automatic sync and buyer-group editors sync only approved customer rows [${engine}]`,async t=>{
     const f=await fixture(t,engine);const initial=emptyState();initial.invoices=[{id:'PRIVATE',customer:'Other',date:'2026-11-01',amount:300}];initial.buyerGroups=[{id:'G',name:'Buyer group',customers:['Buyer']}];await f.db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(initial)]);
     const editor=await createUser(f.db,{email:'scoped-sync@example.com',name:'Editor',password:'Safe-sync-test-password',role:'editor',mustChange:false,buyerGroupIds:['G']});
