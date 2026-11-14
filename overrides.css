@@ -44,3 +44,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .detail-section #invoiceRemarks{width:100%;min-height:100px;resize:vertical;padding:10px;border:1px solid #dce3ed;border-radius:6px;font:inherit;box-sizing:border-box}
 .nav-item[data-view="claims"]{white-space:normal;line-height:1.4;min-height:44px;height:auto}
 #claimCalculation>div{display:flex;flex-direction:column;gap:6px;padding:10px}
+.bank-receipt-filters{flex-wrap:wrap;align-items:center;position:relative;z-index:2}
+.bank-multi-filter{position:relative;min-width:190px}
+.bank-multi-filter summary{cursor:pointer;border:1px solid #dce3ed;border-radius:6px;padding:9px 12px;background:#fff;font-weight:700;list-style-position:inside}
+.bank-filter-menu{position:absolute;top:100%;left:0;margin-top:5px;background:#fff;min-width:270px;max-width:min(360px,80vw);border:1px solid #dce3ed;border-radius:8px;box-shadow:0 8px 24px #19223826;padding:10px;z-index:6}
+.bank-filter-tools{display:flex;gap:8px;margin-bottom:8px}
+.bank-filter-options{max-height:260px;overflow:auto;display:grid;gap:4px}
+.bank-filter-options label{display:flex;align-items:center;gap:9px;padding:7px 4px;cursor:pointer;font-size:12px;overflow-wrap:anywhere}
+.bank-filter-options input{width:16px;height:16px;flex-shrink:0}
+.bank-filter-result{font-size:11px;color:var(--muted)}
