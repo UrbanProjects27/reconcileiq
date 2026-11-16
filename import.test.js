@@ -37,6 +37,10 @@ test('vendor imports keep vendor document identities and preserve user GRN/CN fi
     const conflict=structuredClone(input);conflict.rows.push(['Vendor A','2026-11-01','0000123',1200]);assert.equal(prepareImport(conflict,emptyState()).canImport,false);
   }
 });
+test('TDS194Q debit notes import with supported aliases and pass required-field validation',()=>{
+  const current=emptyState();current.invoices=[{id:'I-Q',customer:'Buyer',date:'2026-11-01',amount:1000}];
+  for(const type of ['TDS194Q','tds 194q','TDS-194Q']){const result=prepareImport({type:'debitNotes',rows:[['DN-Q','Buyer','2026-11-16',100,'I-Q',type,'C001']],mapping:{id:0,customer:1,date:2,amount:3,invoice:4,type:5,customerCode:6},startRow:2,dateFormat:'iso'},current);assert.equal(result.canImport,true,JSON.stringify(result.errors));assert.equal(result.state.debitNotes[0].type,'TDS194Q');require('./lib/state').validateDebitFields(result.state,current);}
+});
 test('invalid rows block the complete batch and report source rows',()=>{
   const rows=[['INV-1','Acme','03/11/2026',100],['INV-2','Acme','31/02/2026',200],['INV-3','Acme','03/11/2026',-1],['INV-4','<script>','03/11/2026',50]];
   const result=prepareImport(invoiceInput(rows),emptyState());assert.equal(result.canImport,false);assert.equal(result.state,undefined);assert.deepEqual(result.errors.map(e=>e.row),[3,4,5]);
