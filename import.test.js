@@ -175,3 +175,18 @@ test('XLSX coordinate limits reject sparse billion-row worksheets before parsing
   entries['xl/worksheets/sheet1.xml']=strToU8(strFromU8(entries['xl/worksheets/sheet1.xml']).replace('<row r="2">','<row r="1000000000">'));
   await assert.rejects(()=>parseWorkbook('sparse.xlsx',Buffer.from(zipSync(entries))),/too large/);
 });
+
+
+test('seven-column vendor imports create and update matching details, preserve blank matches and reject partial batches',()=>{
+  for(const type of ['vendorSales','vendorRTV']){
+    const mapping={vendor:0,date:1,number:2,amount:3,matchDate:4,matchNumber:5,matchAmount:6};
+    assert.equal(require('./lib/import').definitions[type].fields.length,7);
+    const input={type,mapping,rows:[['Vendor A','2026-11-01','DOC1',1000,'20/11/2026','MATCH1',995]],startRow:2,dateFormat:'dmy'};
+    const created=prepareImport(input,emptyState());assert.equal(created.canImport,true,JSON.stringify(created.errors));assert.equal(created.state[type][0].matchDate,'2026-11-20');assert.equal(created.state[type][0].status,'Settled');assert.equal(prepareImport(input,created.state).counts.skipped,1);
+    const changed=structuredClone(input);changed.rows[0][5]='MATCH2';changed.rows[0][6]=500;const updated=prepareImport(changed,created.state);assert.equal(updated.counts.updated,1);assert.equal(updated.state[type][0].matchNumber,'MATCH2');assert.equal(updated.state[type][0].difference,500);assert.equal(updated.state[type][0].status,'Unsettled');
+    const blank=structuredClone(input);blank.rows[0]=['Vendor A','2026-11-01','DOC1',1100,'','',''];const preserved=prepareImport(blank,updated.state);assert.equal(preserved.state[type][0].matchAmount,500);assert.equal(preserved.state[type][0].matchNumber,'MATCH2');
+    const zero=structuredClone(input);zero.rows[0][6]=0;assert.equal(prepareImport(zero,emptyState()).state[type][0].matchAmount,0);
+    for(const index of [4,5,6]){const partial=structuredClone(input);partial.rows[0][index]='';partial.rows.unshift(['Vendor B','2026-11-01','GOOD',100,'','','']);const rejected=prepareImport(partial,emptyState());assert.equal(rejected.canImport,false);assert.equal(rejected.state,undefined);assert.equal(rejected.errors[0].row,3);}
+    const negative=structuredClone(input);negative.rows[0][6]=-1;assert.equal(prepareImport(negative,emptyState()).canImport,false);
+  }
+});

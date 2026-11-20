@@ -643,3 +643,7 @@ test('bulk delete selection pages explicitly and confirms exactly the reviewed r
   const app=workspace(undefined,{state:initial,revision:7,user:{role:'admin'}});app.run("currentView='advice';modal=()=>({querySelector:selector=>document.getElementById(selector.slice(1)),querySelectorAll:()=>[]});render=()=>{};closeModal=()=>{};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>{window.deletedPayload=input;return {state:{...state,advice:[]},revision:8};};openBulkDelete();");
   app.element('selectBulkVisible').onclick();assert.match(app.element('bulkDeleteCount').textContent,/500 selected/);app.element('bulkDeleteNext').onclick();app.element('selectBulkVisible').onclick();assert.match(app.element('bulkDeleteCount').textContent,/501 selected/);app.element('reviewBulkDelete').onclick();await app.element('confirmBulkDelete').onclick();assert.equal(app.run('window.deletedPayload.entries.length'),501);assert.equal(app.run('window.deletedPayload.entries[500].index'),500);assert.equal(app.run('window.deletedPayload.revision'),7);
 });
+
+test('both vendor download templates include all seven import columns in order',()=>{
+  const app=workspace();for(const type of ['vendorSales','vendorRTV']){app.context.templateType=type;app.run('downloadRegisterImportTemplate(templateType)');const headers=require('csv-parse/sync').parse(app.context.exportedCSV)[0];assert.equal(headers.length,7);assert.deepEqual(headers.slice(4),type==='vendorSales'?['GRN Date','GRN number','GRN amount']:['Vendor CN Date','Vendor CN number','Vendor CN amount']);}
+});
