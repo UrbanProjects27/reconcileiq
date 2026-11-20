@@ -10,7 +10,7 @@ function workspace(saved, shared) {
     if (!elements.has(id)) elements.set(id, {
       value: '', innerHTML: '', dataset: {},
       classList: { add() {}, remove() {}, toggle() {}, contains() {return true;} },
-      addEventListener(name,handler) {this.listeners??={};this.listeners[name]=handler;}, querySelectorAll() { return []; }, append() {},
+      querySelector(){return null;}, addEventListener(name,handler) {this.listeners??={};this.listeners[name]=handler;}, querySelectorAll() { return []; }, append() {},
       focus(){this.focused=true;},setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;},
     });
     return elements.get(id);
@@ -614,4 +614,32 @@ test('receipt matching sums split payments and flags duplicate references',async
   assert.equal(app.run('state.bank[0].status'),'matched');
   assert.equal(app.run('state.bank[1].status'),'review');
   assert.equal(app.run('state.bank[2].status'),'review');
+});
+
+test('customer scope survives render and filters both dashboard and invoice register',()=>{
+  const app=workspace();app.run("state.invoices=[{id:'A',customer:'Alpha',amount:100,date:'2026-11-01'},{id:'B',customer:'Beta',amount:200,date:'2026-11-01'}];state.advice=[];state.returns=[];state.priceReturns=[];state.debitNotes=[];customerScope.customer='customer:alpha';normalizeCustomerScope();");
+  assert.equal(app.run('customerScope.customer'),'customer:alpha');assert.equal(app.run('invoiceRegisterData().invoices.length'),1);assert.equal(app.run('dashboardData().invoices.length'),1);
+});
+test('vendor filters combine and bulk matching validates identities, dates, amounts and duplicates before changing state',()=>{
+  const app=workspace();app.run("state.vendorSales=[{id:'V1',vendor:'Alpha',number:'A1',date:'2026-11-01',amount:1000},{id:'V2',vendor:'Beta',number:'A1',date:'2026-11-01',amount:500}];vendorFilters={vendor:'alpha',status:'Unsettled'};");
+  assert.equal(app.run('vendorLedgerRows().length'),1);app.context.paste='Alpha\tA1\t20/11/2026\tGRN1\t995\nBeta\tA1\t2026-11-20\tGRN2\t400';
+  assert.equal(app.run("prepareVendorMatches(paste,'vendorSales')[0].status"),'Settled');assert.equal(app.run("prepareVendorMatches(paste,'vendorSales')[1].difference"),100);assert.equal(app.run('state.vendorSales[0].matchNumber'),undefined);
+  for(const text of ['Alpha\tA1\t31/02/2026\tG\t1','Other\tA1\t2026-11-20\tG\t1','Alpha\tA1\t2026-11-20\tG\t-1','Alpha\tA1\t2026-11-20\tG\t1\nAlpha\tA1\t2026-11-20\tG\t2']){app.context.paste=text;assert.throws(()=>app.run("prepareVendorMatches(paste,'vendorSales')"));}
+  app.run("vendorLedgerView='vendorRTV';state.vendorRTV=[{id:'R1',vendor:'Alpha',number:'R1',date:'2026-11-01',amount:50}]");app.context.paste='Alpha\tR1\t2026-11-20\tCN1\t50';assert.equal(app.run("prepareVendorMatches(paste,'vendorRTV')[0].status"),'Settled');
+});
+
+test('bulk vendor review saves both rows atomically and preserves pasted draft when save fails',async()=>{
+  const initial=workspace().run('clone(seed)');initial.vendorSales=[{id:'V1',vendor:'Alpha',number:'A1',date:'2026-11-01',amount:1000},{id:'V2',vendor:'Beta',number:'B1',date:'2026-11-01',amount:500}];
+  const app=workspace(undefined,{state:initial,revision:1,user:{role:'editor'}});app.run("modal=()=>({querySelector:selector=>document.getElementById(selector.slice(1))});render=()=>{};closeModal=()=>{};showToast=()=>{};window.workspaceAPI=async()=>{throw Error('Offline');};openBulkVendorMatch();");
+  const pasted='Alpha\tA1\t2026-11-20\tGRN1\t995\nBeta\tB1\t2026-11-20\tGRN2\t500';app.element('bulkVendorData').value=pasted;app.element('previewVendorMatches').onclick();await app.element('saveVendorMatches').onclick();assert.match(app.element('bulkVendorError').textContent,/Offline/);assert.equal(app.run('state.vendorSales[0].matchNumber'),undefined);app.element('backVendorBatch').onclick();assert.equal(app.element('bulkVendorData').value,pasted);
+  app.run('window.workspaceAPI=async(route,method,input)=>({state:input.state,revision:2});');app.element('previewVendorMatches').onclick();await app.element('saveVendorMatches').onclick();assert.equal(app.run('state.vendorSales[0].matchNumber'),'GRN1');assert.equal(app.run('state.vendorSales[1].matchNumber'),'GRN2');assert.equal(app.run('state.vendorSales[0].amount'),1000);
+});
+test('bulk delete candidates respect register filters and identify duplicate advice IDs separately',()=>{
+  const app=workspace();app.run("state.advice=[{id:'BATCH',customer:'Alpha',invoice:'I1',type:'Payment'},{id:'BATCH',customer:'Alpha',invoice:'I2',type:'EPC'},{id:'OTHER',customer:'Beta',invoice:'I3',type:'Payment'}];currentView='advice';customerScope.customer='customer:alpha';adviceFilter.type='all';");assert.equal(app.run('bulkDeleteCandidates().length'),2);assert.equal(app.run('bulkDeleteCandidates()[1].index'),1);app.run("adviceFilter.type='EPC'");assert.equal(app.run('bulkDeleteCandidates().length'),1);assert.equal(app.run('bulkDeleteCandidates()[0].index'),1);
+});
+
+test('bulk delete selection pages explicitly and confirms exactly the reviewed rows',async()=>{
+  const initial=workspace().run('clone(seed)');initial.advice=Array.from({length:501},(_,index)=>({id:'PA'+index,customer:'Buyer',invoice:'INV'+index,type:'TDS',amount:1}));
+  const app=workspace(undefined,{state:initial,revision:7,user:{role:'admin'}});app.run("currentView='advice';modal=()=>({querySelector:selector=>document.getElementById(selector.slice(1)),querySelectorAll:()=>[]});render=()=>{};closeModal=()=>{};showToast=()=>{};window.workspaceAPI=async(route,method,input)=>{window.deletedPayload=input;return {state:{...state,advice:[]},revision:8};};openBulkDelete();");
+  app.element('selectBulkVisible').onclick();assert.match(app.element('bulkDeleteCount').textContent,/500 selected/);app.element('bulkDeleteNext').onclick();app.element('selectBulkVisible').onclick();assert.match(app.element('bulkDeleteCount').textContent,/501 selected/);app.element('reviewBulkDelete').onclick();await app.element('confirmBulkDelete').onclick();assert.equal(app.run('window.deletedPayload.entries.length'),501);assert.equal(app.run('window.deletedPayload.entries[500].index'),500);assert.equal(app.run('window.deletedPayload.revision'),7);
 });

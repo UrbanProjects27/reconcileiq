@@ -11,7 +11,7 @@ const {createBulkImport}=require('./lib/bulk-import');
 const {createAutoSync}=require('./lib/auto-sync');
 const {createPasswordReset,revokePasswordResets}=require('./lib/password-reset');
 const {encodeState,decodeState,maxStateBytes}=require('./lib/state-codec');
-const {requireAdminForRemovals,requireAdminForOpeningEdits,requireVendorSourceUnchanged,deleteRecord}=require('./lib/records');
+const {requireAdminForRemovals,requireAdminForOpeningEdits,requireVendorSourceUnchanged,deleteRecord,deleteRecords}=require('./lib/records');
 const {validateAttachment}=require('./lib/claim-attachments');
 const customerAccess=require('./lib/customer-access');
 const {gzipSync,gunzipSync}=require('node:zlib');
@@ -241,7 +241,7 @@ async function createApplication(options = {}) {
           if(previous.revision!==input.revision)fail(409,'Another user saved changes. Review the latest data and save again.');
           let imported,deleted;const before=decodeState(previous.data);
           if(route==='/api/state')next=customerAccess.mergeState(before,input.state,actor);
-          if(route==='/api/records/delete'){const result=deleteRecord(before,input);next=result.state;deleted=result.deleted;}
+          if(route==='/api/records/delete'){const result=input.entries===undefined?deleteRecord(before,input):deleteRecords(before,input);next=result.state;deleted=result.deleted;}
           if(route === '/api/import'){
             if(previous.revision!==input.revision)fail(409,'The workspace changed. Review a fresh import preview before saving.');
             imported=prepareImport(input,customerAccess.filterState(before,actor));

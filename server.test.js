@@ -546,3 +546,15 @@ integrationTest('repeated login failures are throttled',async (t, engine)=>{
   for(let index=0;index<10;index++) assert.equal((await request('/api/login','POST',{email:'missing@example.com',password})).status,401);
   assert.equal((await request('/api/login','POST',{email:'missing@example.com',password})).status,429);
 });
+
+integrationTest('bulk delete is atomic, revision protected, admin only and identifies repeated advice IDs by index',async(t,engine)=>{
+  const {request,login,db}=await fixture(t,engine),admin=await login();await createUser(db,{email:'bulk-editor@example.com',name:'Editor',password,role:'editor',mustChange:false});const editor=await login('bulk-editor@example.com');
+  const state=emptyState();state.invoices=[{id:'I1',customer:'Buyer',date:'2026-11-01',amount:1000},{id:'I2',customer:'Buyer',date:'2026-11-01',amount:1000}];state.bank=[{ref:'UTR',customer:'Buyer',date:'2026-11-01',amount:1000,status:'matched'}];state.advice=[{id:'BATCH',customer:'Buyer',date:'2026-11-01',invoice:'I1',type:'Payment',amount:600,utr:'UTR',description:'One'},{id:'BATCH',customer:'Buyer',date:'2026-11-01',invoice:'I2',type:'Payment',amount:400,utr:'UTR',description:'Two'}];await db.query('UPDATE workspace SET data=$1 WHERE id=1',[JSON.stringify(validateState(state))]);
+  const entries=[{collection:'advice',index:0,identifier:'BATCH'}];assert.equal((await request('/api/records/delete','POST',{entries,revision:0},editor)).status,403);
+  assert.equal((await request('/api/records/delete','POST',{entries:[...entries,{collection:'invoices',index:0,identifier:'I1'}],revision:0},admin)).status,409);assert.equal((await request('/api/state','GET',undefined,admin)).body.state.advice.length,2);
+  assert.equal((await request('/api/records/delete','POST',{entries:[...entries,...entries],revision:0},admin)).status,400);
+  const deleted=await request('/api/records/delete','POST',{entries,revision:0},admin);assert.equal(deleted.status,200,JSON.stringify(deleted.body));assert.equal(deleted.body.state.advice.length,1);assert.equal(deleted.body.state.advice[0].invoice,'I2');assert.equal(require('./finance').rows(deleted.body.state)[0].pendingToMatch,600);
+  assert.equal((await request('/api/records/delete','POST',{entries,revision:0},admin)).status,409);
+  const remaining=await request('/api/records/delete','POST',{entries,revision:1},admin);assert.equal(remaining.status,200);assert.equal(remaining.body.state.bank[0].status,'unmatched');
+  assert.equal((await db.query('SELECT detail FROM audit_events WHERE action=$1',['record.deleted'])).length,2);assert.equal((await db.query('SELECT revision FROM workspace_snapshots')).length,2);
+});
